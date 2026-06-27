@@ -1,0 +1,46 @@
+name: 🎬 Upload YouTube Short quotidien
+
+on:
+  schedule:
+    # 18h heure de Paris = 16h UTC (hiver) / 17h00 UTC (été)
+    # On met 16h UTC pour couvrir les deux saisons
+    - cron: '0 16 * * *'
+  workflow_dispatch:  # Permet de lancer manuellement depuis GitHub
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      # 1. Récupérer le code du repo
+      - name: 📥 Cloner le repo
+        uses: actions/checkout@v4
+
+      # 2. Installer Python
+      - name: 🐍 Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. Installer les dépendances
+      - name: 📦 Installer les dépendances
+        run: pip install -r requirements.txt
+
+      # 4. Récupérer les secrets et créer les fichiers de config
+      - name: 🔑 Créer client_secrets.json
+        run: |
+          echo '${{ secrets.CLIENT_SECRETS_JSON }}' > config/client_secrets.json
+          mkdir -p config
+
+      - name: 🔐 Créer token.pickle
+        run: |
+          echo '${{ secrets.YOUTUBE_TOKEN_PICKLE_B64 }}' | base64 -d > config/token.pickle
+
+      # 5. Générer + uploader la vidéo du jour
+      - name: 🚀 Générer et uploader le Short du jour
+        run: python scripts/daily_upload.py
+
+      env:
+        TZ: Europe/Paris
