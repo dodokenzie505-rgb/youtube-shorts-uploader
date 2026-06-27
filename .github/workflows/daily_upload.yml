@@ -31,8 +31,8 @@ jobs:
       # 4. Récupérer les secrets et créer les fichiers de config
       - name: 🔑 Créer client_secrets.json
         run: |
-          echo '${{ secrets.CLIENT_SECRETS_JSON }}' > config/client_secrets.json
           mkdir -p config
+          echo '${{ secrets.CLIENT_SECRETS_JSON }}' > config/client_secrets.json
 
       - name: 🔐 Créer token.pickle
         run: |
