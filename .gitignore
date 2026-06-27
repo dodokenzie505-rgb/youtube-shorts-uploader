@@ -1,0 +1,26 @@
+# Secrets & tokens — NE JAMAIS committer !
+config/client_secrets.json
+config/token.pickle
+*.json
+*.pickle
+
+# Vidéos générées
+videos_output/
+*.mp4
+*.avi
+*.mov
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# Colab checkpoints
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
