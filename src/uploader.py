@@ -59,9 +59,6 @@ def authenticate(credentials_path: str = None, token_path: str = None) -> object
                     "👉 Télécharge-le depuis Google Cloud Console > APIs > Credentials"
                 )
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
-            # run_console() = compatible Colab (pas de navigateur local)
-            from google_auth_oauthlib.flow import InstalledAppFlow
-            import urllib
             flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
             auth_url, _ = flow.authorization_url(prompt="consent")
             print("\n👉 Clique sur ce lien pour autoriser :\n")
