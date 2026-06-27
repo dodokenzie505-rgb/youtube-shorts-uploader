@@ -9,10 +9,10 @@ from pathlib import Path
 def _ensure_installed():
     import shutil
     if not shutil.which("ffmpeg"):
-        subprocess.run(["apt-get", "install", "-y", "-q", "ffmpeg"], check=True)
+        subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "ffmpeg"], check=True)
     amiri_path = "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Regular.ttf"
     if not os.path.exists(amiri_path):
-        subprocess.run(["apt-get", "install", "-y", "-q", "fonts-hosny-amiri"], check=True)
+        subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-hosny-amiri"], check=True)
     try:
         import PIL
     except ImportError:
@@ -1407,4 +1407,4 @@ def _align_whisper_to_verse(verse_words, whisper_words, aud_dur):
                 best_scr = scr
                 best_j   = j
         if best_scr > 0.35:
-            tlist[vi] = {"start": whisper_words[best_j]["start"], "end": whisper_words[best_j]["end"]
+            tlist[vi] = {"start": whisper_words[best_j]["start"], "end": whisper_word
