@@ -41,6 +41,5 @@ jobs:
       # 5. Générer + uploader la vidéo du jour
       - name: 🚀 Générer et uploader le Short du jour
         run: python scripts/daily_upload.py
-
-      env:
-        TZ: Europe/Paris
+        env:
+          TZ: Europe/Paris
