@@ -60,7 +60,16 @@ def authenticate(credentials_path: str = None, token_path: str = None) -> object
                 )
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
             # run_console() = compatible Colab (pas de navigateur local)
-            creds = flow.run_console()
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            import urllib
+            flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+            auth_url, _ = flow.authorization_url(prompt="consent")
+            print("\n👉 Clique sur ce lien pour autoriser :\n")
+            print(auth_url)
+            print("\n📋 Copie le code et colle-le ci-dessous :")
+            code = input("Code : ")
+            flow.fetch_token(code=code)
+            creds = flow.credentials
 
         # Sauvegarder le token pour les prochaines fois
         with open(tok_path, "wb") as f:
