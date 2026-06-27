@@ -24,46 +24,7 @@ def _ensure_installed():
 
 _ensure_installed()
 
-import subprocess, sys, importlib, shutil
 
-def _ensure_installed():
-    # ── ffmpeg ──────────────────────────────────────────────────────────────
-    if not shutil.which("ffmpeg"):
-        print("📦 Installation ffmpeg...")
-        subprocess.run(["apt-get", "install", "-y", "-q", "ffmpeg"], check=True)
-        print("✅ ffmpeg OK")
-    else:
-        print("✅ ffmpeg déjà présent")
-
-    # ── fonts-hosny-amiri ────────────────────────────────────────────────────
-    amiri_path = "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Regular.ttf"
-    import os
-    if not os.path.exists(amiri_path):
-        print("📦 Installation polices arabes...")
-        subprocess.run(["apt-get", "install", "-y", "-q", "fonts-hosny-amiri"], check=True)
-        print("✅ Polices OK")
-    else:
-        print("✅ Polices arabes déjà présentes")
-
-    # ── Pillow ───────────────────────────────────────────────────────────────
-    try:
-        import PIL
-        print("✅ Pillow déjà présent")
-    except ImportError:
-        print("📦 Installation Pillow...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "Pillow", "-q"], check=True)
-        print("✅ Pillow OK")
-
-    # ── openai-whisper ───────────────────────────────────────────────────────
-    try:
-        import whisper
-        print("✅ Whisper déjà présent")
-    except ImportError:
-        print("📦 Installation Whisper (peut prendre ~1 min)...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "openai-whisper", "-q"], check=True)
-        print("✅ Whisper OK")
-
-_ensure_installed()
 print("\n🚀 Démarrage de la génération...\n")
 
 import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil
