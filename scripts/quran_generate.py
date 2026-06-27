@@ -1407,4 +1407,371 @@ def _align_whisper_to_verse(verse_words, whisper_words, aud_dur):
                 best_scr = scr
                 best_j   = j
         if best_scr > 0.35:
-            tlist[vi] = {"start": whisper_words[best_j]["start"], "end": whisper_word
+            tlist[vi] = {"start": whisper_words[best_j]["start"], "end": whisper_words[best_j]["end"]}
+            wi = best_j + 1
+    _interpolate_gaps(tlist, aud_dur)
+    return tlist
+
+def _interpolate_gaps(tlist, aud_dur):
+    n = len(tlist)
+    if not any(t is not None for t in tlist):
+        for i in range(n):
+            tlist[i] = {"start": aud_dur * i / n, "end": aud_dur * (i + 1) / n}
+        return
+    first_known = next((i for i, t in enumerate(tlist) if t is not None), 0)
+    for i in range(first_known):
+        t_end = tlist[first_known]["start"]
+        tlist[i] = {"start": t_end * i / max(1, first_known), "end": t_end * (i + 1) / max(1, first_known)}
+    last_known = max(i for i, t in enumerate(tlist) if t is not None)
+    for i in range(last_known + 1, n):
+        t_start = tlist[last_known]["end"]
+        remaining = aud_dur - t_start
+        gap = n - last_known - 1
+        pos = i - last_known - 1
+        tlist[i] = {"start": t_start + remaining * pos / max(1, gap), "end": t_start + remaining * (pos + 1) / max(1, gap)}
+    i = 0
+    while i < n:
+        if tlist[i] is None:
+            j = i + 1
+            while j < n and tlist[j] is None:
+                j += 1
+            t_left  = tlist[i-1]["end"]   if i > 0 else 0.0
+            t_right = tlist[j]["start"]   if j < n else aud_dur
+            gap_n   = j - i
+            for k in range(gap_n):
+                frac = k / gap_n
+                frac2 = (k + 1) / gap_n
+                tlist[i + k] = {"start": t_left + (t_right - t_left) * frac, "end": t_left + (t_right - t_left) * frac2}
+            i = j
+        else:
+            i += 1
+
+def _fallback_timings(words, aud_dur):
+    def char_count(w):
+        return max(1, sum(1 for c in w if unicodedata.category(c).startswith("L")))
+    counts  = [char_count(w) for w in words]
+    total_c = sum(counts)
+    intro   = min(0.15, aud_dur * 0.04)
+    usable  = aud_dur - intro - min(0.08, aud_dur * 0.02)
+    tlist   = []
+    t       = intro
+    for c in counts:
+        dw = usable * c / total_c
+        tlist.append({"start": t, "end": t + dw})
+        t += dw
+    tlist[-1]["end"] = aud_dur
+    return tlist
+
+def select_verses(passage, reciter):
+    """v7.2 : TOUS les versets du passage.
+    Les sous-parties d'un même verset (même surah+ayah) partagent UN seul audio.
+
+    🔧 FIX karaoké : pour une ayah découpée en plusieurs écrans (ex. Ayat Al-Kursi
+    a→h), les timings mot-à-mot sont calculés UNE SEULE FOIS sur le texte COMPLET
+    de l'ayah (concaténation de toutes ses sous-parties, dans l'ordre du passage),
+    puis chaque sous-partie reçoit :
+      - sa TRANCHE de timings (les mots qui la concernent),
+      - sa FENÊTRE TEMPORELLE dans l'audio complet (window_start → window_end),
+        déterminée par les timings réels des mots voisins,
+      - des timings RELOCALISÉS à 0 dans cette fenêtre.
+    Ainsi chaque écran ne dure que le temps réellement nécessaire à la récitation
+    de SES mots, et la somme des fenêtres de tous les écrans d'une ayah == durée
+    totale de l'audio de cette ayah. Le surlignage reste donc parfaitement
+    synchronisé, écran après écran, du début à la fin de l'ayah.
+    """
+    sel, audios, aud_durs, timings_list, engines, frame_counts = [], [], [], [], [], []
+
+    # Regrouper les sous-parties consécutives par ayah réelle (surah, ayah)
+    # Ex: Ayat Al-Kursi a→h ont toutes surah=2, ayah=255 → 1 seul audio
+    ayah_groups = {}   # (surah, ayah, qid) → liste des sous-parties (dans l'ordre du passage)
+    for verse in passage["verses"]:
+        key = (verse["surah"], verse["ayah"], reciter["qid"])
+        ayah_groups.setdefault(key, []).append(verse)
+
+    ayah_audio_cache = {}   # (surah, ayah, qid) → (audio_path, ad, full_timings, total_words)
+    ayah_word_offset = {}   # (surah, ayah, qid) → nb de mots déjà consommés par les sous-parties précédentes
+    ayah_frames_emitted = {}  # (surah, ayah, qid) → nb de frames déjà émises (arrondi cumulatif)
+
+    for verse in passage["verses"]:
+        key = (verse["surah"], verse["ayah"], reciter["qid"])
+        n_words_sub = len(verse["ar"].split())
+
+        if key not in ayah_audio_cache:
+            # Première sous-partie de cette ayah : télécharger l'audio
+            audio = dl_audio(verse, reciter)
+            ad    = get_audio_dur(audio) if audio else 4.5
+            # Texte COMPLET de l'ayah = concaténation de toutes ses sous-parties
+            full_ar    = " ".join(v["ar"] for v in ayah_groups[key])
+            full_verse = dict(verse)
+            full_verse["ar"] = full_ar
+            # Timings mot-à-mot calculés UNE SEULE FOIS sur le texte complet
+            full_timings = get_timings(full_verse, reciter, audio, ad)
+            total_words  = len(full_ar.split())
+            ayah_audio_cache[key] = (audio, ad, full_timings, total_words)
+            ayah_word_offset[key] = 0
+            print(f"      {verse['surah']}:{verse['ayah']} ({round(ad,1)}s) [audio téléchargé — {total_words} mots]")
+        else:
+            print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
+
+        audio, ad, full_timings, total_words = ayah_audio_cache[key]
+        offset = ayah_word_offset[key]
+        offset = min(offset, max(0, total_words - n_words_sub))  # garde-fou
+        sub_timings = full_timings[offset: offset + n_words_sub]
+
+        # ── Fenêtre temporelle de cette sous-partie dans l'audio complet ──────
+        if offset <= 0:
+            window_start = 0.0
+        else:
+            # FIX v7.5 : on utilise directement la fin du mot précédent
+            # (pas de moyenne floue qui introduit un décalage cumulatif)
+            window_start = full_timings[offset - 1]["end"]
+
+        end_idx = offset + n_words_sub
+        if end_idx >= total_words:
+            window_end = ad
+        else:
+            # FIX v7.5 : on utilise directement le début du mot suivant
+            window_end = full_timings[end_idx]["start"]
+
+        window_start = max(0.0, min(window_start, ad))
+        window_end   = max(window_start + 0.05, min(window_end, ad))
+        window_dur   = window_end - window_start
+
+        # ── Timings relocalisés à 0 dans cette fenêtre ────────────────────────
+        local_timings = [{"start": max(0.0, min(t["start"] - window_start, window_dur)),
+                          "end":   max(0.0, min(t["end"]   - window_start, window_dur))}
+                         for t in sub_timings]
+        for i in range(1, len(local_timings)):
+            if local_timings[i]["start"] < local_timings[i - 1]["end"]:
+                local_timings[i]["start"] = local_timings[i - 1]["end"]
+        if local_timings:
+            local_timings[-1]["end"] = window_dur
+
+        ayah_word_offset[key] = end_idx
+
+        # 🔧 FIX dérive cumulative : le nombre de frames de CHAQUE écran est calculé
+        # par arrondi CUMULATIF (façon Bresenham) sur la durée réelle de l'audio
+        # complet de l'ayah, pas par troncature indépendante de chaque fenêtre.
+        # On utilise un compteur cumulatif PARTAGÉ entre les sous-parties d'une
+        # même ayah pour garantir qu'elles s'emboîtent exactement (zéro trou,
+        # zéro recouvrement), sans dépendre de recalculs flottants indépendants
+        # qui pourraient désynchroniser deux sous-parties voisines d'un seul frame.
+        total_frames_full_ayah = int(round(ad * FPS))
+        cum_before = ayah_frames_emitted.get(key, 0)
+        is_last_subpart = (end_idx >= total_words)
+        if is_last_subpart:
+            cum_after = total_frames_full_ayah  # garantit la somme exacte, pas d'arrondi résiduel
+        else:
+            cum_after = int(round(window_end / ad * total_frames_full_ayah)) if ad > 0 else cum_before
+            cum_after = max(cum_after, cum_before + 1)
+        n_audio_frames = max(1, cum_after - cum_before)
+        ayah_frames_emitted[key] = cum_after
+
+        engine = SyncEngine(local_timings, n_audio_frames, window_dur, FPS)
+
+        sel.append(verse)
+        audios.append(audio)
+        aud_durs.append(window_dur)
+        timings_list.append(local_timings)
+        engines.append(engine)
+        frame_counts.append(n_audio_frames)
+
+    # Audio mixé : dédoublonner les fichiers audio (même ayah = même fichier complet)
+    seen_audio = []
+    seen_keys  = set()
+    for verse in sel:
+        key = (verse["surah"], verse["ayah"], reciter["qid"])
+        if key not in seen_keys:
+            audio, ad, _, _ = ayah_audio_cache[key]
+            seen_audio.append((audio, ad))
+            seen_keys.add(key)
+
+    unique_audios = [a for a, _ in seen_audio]
+    unique_durs   = [d for _, d in seen_audio]
+
+    total_dur = sum(unique_durs) + BREATH * max(0, len(unique_audios) - 1)
+    audio_dur = sum(unique_durs)
+    print(f"   Total : {len(sel)} écrans — {len(unique_audios)} ayat audio — {audio_dur:.1f}s audio — {total_dur:.1f}s vidéo")
+    return sel, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts
+
+def mix_audio(audio_list, dur_list, total_dur):
+    """
+    Concatène les fichiers audio avec un court silence BREATH entre chaque verset.
+    Cela préserve le silence naturel entre les ayat, sans jamais couper la récitation.
+    """
+    valid = [(a, d) for a, d in zip(audio_list, dur_list) if a and Path(a).exists()]
+    if not valid:
+        return None
+    # Générer un fichier silence .aac de BREATH secondes
+    silence_path = OUT_DIR / "cache" / "silence_breath.aac"
+    if not silence_path.exists():
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i",
+            f"anullsrc=r=44100:cl=stereo",
+            "-t", str(BREATH), "-c:a", "aac", "-b:a", "192k", str(silence_path)
+        ], capture_output=True)
+    inputs, concat_parts, idx = [], [], 0
+    for vi, (audio, _) in enumerate(valid):
+        inputs += ["-i", str(audio)]
+        concat_parts.append(f"[{idx}:a]")
+        idx += 1
+        if vi < len(valid) - 1 and silence_path.exists():
+            inputs += ["-i", str(silence_path)]
+            concat_parts.append(f"[{idx}:a]")
+            idx += 1
+    n   = len(concat_parts)
+    flt = "".join(concat_parts) + f"concat=n={n}:v=0:a=1[aout]"
+    out = OUT_DIR / "cache" / "audio_mixed.aac"
+    r = subprocess.run(
+        ["ffmpeg", "-y"] + inputs + ["-filter_complex", flt, "-map", "[aout]", "-c:a", "aac", "-b:a", "192k", str(out)],
+        capture_output=True, text=True
+    )
+    if r.returncode != 0:
+        print(f"Mix audio erreur: {r.stderr[-300:]}")
+        return None
+    return out
+
+def encode(frames_dir, audio_path, total_dur, out_path):
+    cmd = ["ffmpeg","-y","-framerate",str(FPS),"-start_number","0","-i",str(frames_dir/"frame_%06d.jpg")]
+    if audio_path and Path(audio_path).exists():
+        cmd += ["-i",str(audio_path),"-c:v","libx264","-preset","fast","-crf","18","-c:a","aac","-b:a","192k","-t",str(total_dur),"-shortest"]
+    else:
+        cmd += ["-c:v","libx264","-preset","fast","-crf","18","-t",str(total_dur)]
+    cmd += ["-pix_fmt","yuv420p","-movflags","+faststart",str(out_path)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"ffmpeg erreur: {r.stderr[-400:]}")
+        return False
+    return True
+
+def generate(passage_idx=None):
+    if passage_idx is None:
+        passage_idx = RNG.randint(0, len(PASSAGES) - 1)
+    passage = PASSAGES[passage_idx % len(PASSAGES)]
+    reciter = RNG.choice(RECITERS)
+    print("Passage: " + passage["title"])
+    print("Recitateur: " + reciter["name"] + " " + reciter["flag"])
+    verses, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts = select_verses(passage, reciter)
+    n = len(verses)
+    if n == 0:
+        print("❌ Aucun verset disponible")
+        return None
+    p      = make_params(n)
+    scenes = [get_scene(i, p) for i in range(n)]
+    fd = OUT_DIR / "frames"
+    for f in fd.glob("*.jpg"):
+        f.unlink()
+    # Vider le cache des timings pour recalculer avec le rebase t=0
+    for tf in (OUT_DIR / "cache").glob("timing_*.json"):
+        tf.unlink()
+    print("   🔄 Cache timings vidé — recalcul avec rebase t=0")
+    xf           = p["xf"]
+    gi           = 0
+    # v7 : frames audio + frames breath (silence visuel) entre versets
+    breath_frames = int(BREATH * FPS)
+    # Compter les transitions breath réelles : seulement entre ayat différentes
+    n_breaths = sum(
+        1 for i in range(n - 1)
+        if verses[i+1]["surah"] != verses[i]["surah"] or verses[i+1]["ayah"] != verses[i]["ayah"]
+    )
+    total_frames  = sum(frame_counts) + breath_frames * n_breaths
+    total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
+    print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
+    for vi in range(n):
+        verse   = verses[vi]
+        aud_dur_v = aud_durs[vi]
+        engine  = engines[vi]
+        sc_img, _ = scenes[vi]
+        kb      = p["kb"][vi]
+        n_audio_frames = frame_counts[vi]  # 🔧 même valeur exacte que celle utilisée pour SyncEngine (zéro dérive)
+        # Frames pendant la récitation (son actif)
+        fade_in  = max(1, int(FPS * 0.55))
+        fade_out = max(1, int(FPS * 0.45))
+        next_sc  = scenes[vi+1][0] if vi < n-1 else None
+        next_kb  = p["kb"][vi+1]   if vi < n-1 else None
+        n_words  = len(verse["ar"].split())
+        print("Verset " + str(vi+1) + "/" + str(n) + " — " + verse["ref"] + " — " + str(n_words) + " mots")
+        # ── Frames audio du verset ──────────────────────────────────────────
+        # TRANSITION PROPRE (fix bug glitch) :
+        # - Pendant l'audio : image STABLE (ken-burns), texte visible
+        # - Fade-out texte sur les dernières fade_out frames (image toujours stable)
+        # - Pendant BREATH : image crossfade A→B, texte INVISIBLE (alpha=0)
+        # - Au verset suivant : fade-in texte sur les premières fade_in frames
+        for fi in range(n_audio_frames):
+            t_seg = fi / max(1, n_audio_frames)
+            # Image stable pendant tout le verset (pas de crossfade pendant l'audio)
+            frame = ken_burns(sc_img, t_seg, **kb)
+            # Alpha texte : fade-in en début, fade-out en fin
+            if fi < fade_in:
+                ta = fi / fade_in
+            elif fi > n_audio_frames - fade_out:
+                ta = (n_audio_frames - fi) / max(1, fade_out)
+            else:
+                ta = 1.0
+            sync_fi     = min(fi, n_audio_frames - 1)
+            hi_word     = engine.word_at(sync_fi)
+            hi_strength = engine.hi_strength(sync_fi)
+            frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), hi_word, hi_strength, vi+1, n)
+            frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+            gi += 1
+        # ── Frames BREATH : crossfade IMAGE seulement, texte invisible ────────
+        # Uniquement entre ayat DIFFÉRENTES (pas entre sous-parties du même verset)
+        next_is_new_ayah = (vi < n - 1 and
+            (verses[vi+1]["surah"] != verse["surah"] or
+             verses[vi+1]["ayah"]  != verse["ayah"]))
+        if vi < n - 1 and next_is_new_ayah:
+            for bi in range(breath_frames):
+                t_b = bi / max(1, breath_frames - 1)
+                # Crossfade progressif image A → image B (easing smooth)
+                t_ease = _ease_inout(t_b)
+                frame_a = ken_burns(sc_img, 1.0, **kb)
+                frame_b = ken_burns(next_sc, 0., **next_kb)
+                frame   = Image.blend(frame_a, frame_b, t_ease)
+                # Texte INVISIBLE pendant le crossfade (alpha=0) → plus de glitch
+                frame = render_frame(frame, verse, reciter, passage["title"], 0.0, 0, 0.0, vi+1, n)
+                frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+                gi += 1
+        print(f"  Verset {vi+1} OK")
+    print(f"{gi} frames rendues")
+    audio_track = mix_audio(unique_audios, unique_durs, audio_dur)
+    today = datetime.date.today().strftime("%Y%m%d")
+    out   = OUT_DIR / f"quran_{today}_s{RUN_SEED%99999:05d}.mp4"
+    print(f"Encodage...")
+    ok = encode(fd, audio_track, total_dur, out)
+    for f in fd.glob("*.jpg"):
+        f.unlink()
+    if ok and out.exists():
+        mb = out.stat().st_size / 1024 / 1024
+        print(f"✅ OK: {out.name} ({mb:.1f} MB — {total_dur:.1f}s — {n} versets)")
+        return out
+    else:
+        print("❌ Erreur encodage")
+        return None
+
+# ══════════════════════════════════════════════════════════════════════════
+# Tout est prêt — la génération démarre ci-dessous (bloc Drive)
+# ══════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════
+# POINT D'ENTRÉE — appelé par daily_upload.py
+# ══════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    import datetime, glob
+    print(f'🎲 Seed : {RUN_SEED} — {len(PASSAGES)} passages — {len(RECITERS)} récitateurs')
+    video = generate()
+
+    if video and Path(video).exists():
+        src_path = str(video)
+        yt = src_path.replace('.mp4', '_youtube.mp4')
+        subprocess.run([
+            'ffmpeg', '-y', '-i', src_path,
+            '-c:v', 'libx264', '-profile:v', 'high', '-level', '4.0',
+            '-preset', 'fast', '-crf', '18', '-vf', 'scale=1080:1920',
+            '-r', '30', '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+            '-movflags', '+faststart', '-pix_fmt', 'yuv420p', yt
+        ])
+        print(f'✅ Vidéo YouTube prête : {yt}')
+        sys.exit(0)
+    else:
+        print('❌ Génération échouée')
+        sys.exit(1)
