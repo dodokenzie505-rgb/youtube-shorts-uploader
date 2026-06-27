@@ -15,7 +15,7 @@ from uploader import authenticate, upload_short
 # ─────────────────────────────────────────────────────────────
 def install_deps():
     print("📦 Installation des dépendances système...")
-    subprocess.run(["apt-get", "install", "-y", "-q", "ffmpeg", "fonts-hosny-amiri"], check=True)
+    subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "ffmpeg", "fonts-hosny-amiri"], check=True)
     subprocess.run([sys.executable, "-m", "pip", "install", "-q",
         "Pillow", "openai-whisper"], check=True)
     print("✅ Dépendances OK")
