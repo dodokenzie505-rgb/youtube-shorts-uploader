@@ -1,94 +1,45 @@
-"""
-Script lancé automatiquement chaque jour à 18h par GitHub Actions.
-Il génère la vidéo Quran du jour et l'upload sur YouTube.
-"""
+name: 🎬 Upload YouTube Short quotidien
 
-import sys, os, subprocess, shutil, glob, datetime
-from pathlib import Path
+on:
+  schedule:
+    # 18h heure de Paris = 16h UTC (hiver) / 17h00 UTC (été)
+    # On met 16h UTC pour couvrir les deux saisons
+    - cron: '0 16 * * *'
+  workflow_dispatch:  # Permet de lancer manuellement depuis GitHub
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-from uploader import authenticate, upload_short
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
+    steps:
 
-# ─────────────────────────────────────────────────────────────
-# ÉTAPE 1 : Installer les dépendances système (GitHub Actions)
-# ─────────────────────────────────────────────────────────────
-def install_deps():
-    print("📦 Installation des dépendances système...")
-    subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "ffmpeg", "fonts-hosny-amiri"], check=True)
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-        "Pillow", "openai-whisper"], check=True)
-    print("✅ Dépendances OK")
+      # 1. Récupérer le code du repo
+      - name: 📥 Cloner le repo
+        uses: actions/checkout@v4
 
+      # 2. Installer Python
+      - name: 🐍 Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-# ─────────────────────────────────────────────────────────────
-# ÉTAPE 2 : Exécuter ton code de génération Quran
-# ─────────────────────────────────────────────────────────────
-def generer_video() -> str:
-    """
-    Exécute le notebook Quran converti en script et retourne
-    le chemin de la vidéo générée.
-    """
-    # Lancer le script de génération (extrait de ton notebook)
-    env = os.environ.copy()
-    env["WHISPER_MODEL"] = "small"
-    env["IG_HANDLE"] = "@quranreminders14"
+      # 3. Installer les dépendances
+      - name: 📦 Installer les dépendances
+        run: pip install -r requirements.txt
 
-    result = subprocess.run(
-        [sys.executable, "scripts/quran_generate.py"],
-        env=env,
-        capture_output=False
-    )
+      # 4. Récupérer les secrets et créer les fichiers de config
+      - name: 🔑 Créer client_secrets.json
+        run: |
+          mkdir -p config
+          echo '${{ secrets.CLIENT_SECRETS_JSON }}' > config/client_secrets.json
 
-    if result.returncode != 0:
-        raise RuntimeError("❌ Erreur lors de la génération de la vidéo")
+      - name: 🔐 Créer token.pickle
+        run: |
+          echo '${{ secrets.YOUTUBE_TOKEN_PICKLE_B64 }}' | base64 -d > config/token.pickle
 
-    # Trouver la vidéo YouTube générée (suffixe _youtube.mp4)
-    videos = sorted(glob.glob("quran_out/*_youtube.mp4"), key=os.path.getmtime, reverse=True)
-    if not videos:
-        # Fallback : prendre le mp4 le plus récent
-        videos = sorted(glob.glob("quran_out/*.mp4"), key=os.path.getmtime, reverse=True)
-    if not videos:
-        raise FileNotFoundError("❌ Aucune vidéo trouvée dans quran_out/")
-
-    print(f"✅ Vidéo trouvée : {videos[0]}")
-    return videos[0]
-
-
-# ─────────────────────────────────────────────────────────────
-# ÉTAPE 3 : Upload sur YouTube
-# ─────────────────────────────────────────────────────────────
-def main():
-    today = datetime.date.today().strftime("%d/%m/%Y")
-    print(f"🗓️  Lancement de l'upload du {today} à 18h Paris...")
-
-    install_deps()
-    video_path = generer_video()
-
-    youtube = authenticate(
-        credentials_path="config/client_secrets.json",
-        token_path="config/token.pickle",
-    )
-
-    title = f"Quran Daily Reel — {today} 🕌 #Shorts"
-    description = (
-        f"Récitation du Coran du {today}.\n"
-        "Écoute, médite et partage ❤️\n\n"
-        "#Shorts #Quran #Coran #Islam #QuranRecitation #QuranReminders"
-    )
-    tags = ["quran", "coran", "islam", "shorts", "récitation", "daily", "reminder"]
-
-    result = upload_short(
-        youtube=youtube,
-        video_path=video_path,
-        title=title,
-        description=description,
-        tags=tags,
-        privacy="public",
-    )
-
-    print(f"\n🎉 Vidéo en ligne : {result['url']}")
-
-
-if __name__ == "__main__":
-    main()
+      # 5. Générer + uploader la vidéo du jour
+      - name: 🚀 Générer et uploader le Short du jour
+        run: python scripts/daily_upload.py
+        env:
+          TZ: Europe/Paris
