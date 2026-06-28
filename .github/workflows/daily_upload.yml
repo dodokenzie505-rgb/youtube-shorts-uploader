@@ -1,10 +1,6 @@
 name: 🎬 Upload YouTube Short quotidien
 
 on:
-  schedule:
-    # 18h heure de Paris = 16h UTC (hiver) / 17h00 UTC (été)
-    # On met 16h UTC pour couvrir les deux saisons
-    - cron: '0 14 * * *'
   workflow_dispatch:  # Permet de lancer manuellement depuis GitHub
 
 jobs:
