@@ -59,6 +59,16 @@ FPS       = 24
 # v7 : PAS de limite de durée — on joue TOUS les versets du passage sans coupure
 MAX_DUR   = None   # Pas de limite : la récitation n'est jamais coupée
 BREATH    = 0.40   # Silence naturel entre versets (respecte le rythme de la récitation)
+# 🔧 FIX karaoké parfait : le nombre de frames vidéo du breath (BREATH_FRAMES) et la
+# durée AUDIO du silence inséré entre versets DOIVENT être calculés depuis la MÊME
+# source. Avant : breath_frames = int(BREATH*FPS) = 9 frames (0.375s vidéo) alors que
+# le silence audio généré dans mix_audio() durait 0.40s pile → écart de 0.025s à
+# CHAQUE transition entre ayat, qui s'accumule sur tout le passage et désynchronise
+# progressivement le karaoké des derniers versets. On dérive maintenant BREATH_DUR
+# (durée du silence audio) à partir de BREATH_FRAMES (durée vidéo), pas l'inverse :
+# les deux flux sont ainsi verrouillés image par image, sans dérive possible.
+BREATH_FRAMES = int(round(BREATH * FPS))
+BREATH_DUR    = BREATH_FRAMES / FPS
 ACCOUNT   = os.getenv("IG_HANDLE", "@quranreminders14")
 OUT_DIR   = Path("quran_out")
 for d in [OUT_DIR, OUT_DIR / "frames", OUT_DIR / "cache"]:
@@ -1261,7 +1271,7 @@ def _wrap_words(words, font, max_w):
         lines.append(cur)
     return lines
 
-VISUAL_LEAD_S = 0.25   # Anticipe le surlignage de 250ms pour compenser la latence perceptive
+VISUAL_LEAD_S = 0.15   # Anticipe le surlignage de 150ms pour compenser la latence perceptive
 
 def _ease_inout(t):
     t = max(0.0, min(1.0, t))
@@ -1297,6 +1307,9 @@ class SyncEngine:
     def hi_strength(self, frame_index):
         if not self._timings:
             return 1.0
+        # VISUAL_LEAD_S est déjà appliqué dans word_at() — on l'applique ici
+        # avec la même valeur pour rester cohérent avec le mot sélectionné,
+        # sans le doubler (bug de décalage ×2).
         t    = self.frame_to_t(frame_index) + VISUAL_LEAD_S
         segs = self._timings
         # Avant le premier mot : pas de highlight
@@ -1418,7 +1431,11 @@ def cinematic(img, p):
     mr  = int(math.sqrt(cx**2 + cy**2))
     vs  = int(p["vign"])
     for r in range(mr, 0, -5):
-        a = int(vs * (1 - (r / mr) ** 1.6))  # exposant plus fort = vignette moins agressive
+        # 🔧 FIX vignette inversée : la formule précédente, (1 - (r/mr)**1.6),
+        # donnait une alpha MAXIMALE au centre (r petit) et quasi nulle aux bords
+        # (r proche de mr) — l'inverse du commentaire ci-dessus. On assombrit
+        # maintenant bien les bords (r grand → alpha haute) en laissant le centre clair.
+        a = int(vs * (r / mr) ** 1.6)
         vd.ellipse([cx-r, cy-r, cx+r, cy+r], fill=max(0, a))
     result = Image.composite(Image.new("RGB", (W, H), 0), img, vign)
     # S'assurer que le résultat est suffisamment lumineux
@@ -2007,6 +2024,10 @@ def mix_audio(audio_list, dur_list, total_dur):
     """
     Concatène les fichiers audio avec un court silence BREATH entre chaque verset.
     Cela préserve le silence naturel entre les ayat, sans jamais couper la récitation.
+
+    IMPORTANT : audio_list contient déjà les audios DÉDOUBLONNÉS (un seul par ayah).
+    On insère donc un silence entre chaque ayah — ce qui correspond exactement
+    aux transitions breath visuelles entre ayat différentes.
     """
     valid = [(a, d) for a, d in zip(audio_list, dur_list) if a and Path(a).exists()]
     if not valid:
@@ -2014,16 +2035,19 @@ def mix_audio(audio_list, dur_list, total_dur):
     # Générer un fichier silence .aac de BREATH secondes
     silence_path = OUT_DIR / "cache" / "silence_breath.aac"
     if not silence_path.exists():
+        # 🔧 FIX : durée du silence = BREATH_DUR (verrouillée sur breath_frames vidéo),
+        # pas BREATH brut — garantit zéro dérive audio/vidéo sur les transitions.
         subprocess.run([
             "ffmpeg", "-y", "-f", "lavfi", "-i",
             f"anullsrc=r=44100:cl=stereo",
-            "-t", str(BREATH), "-c:a", "aac", "-b:a", "192k", str(silence_path)
+            "-t", str(BREATH_DUR), "-c:a", "aac", "-b:a", "192k", str(silence_path)
         ], capture_output=True)
     inputs, concat_parts, idx = [], [], 0
     for vi, (audio, _) in enumerate(valid):
         inputs += ["-i", str(audio)]
         concat_parts.append(f"[{idx}:a]")
         idx += 1
+        # Silence UNIQUEMENT entre deux ayat successives (pas après la dernière)
         if vi < len(valid) - 1 and silence_path.exists():
             inputs += ["-i", str(silence_path)]
             concat_parts.append(f"[{idx}:a]")
@@ -2097,12 +2121,14 @@ def generate(passage_idx=None):
     xf           = p["xf"]
     gi           = 0
     # v7 : frames audio + frames breath (silence visuel) entre versets
-    breath_frames = int(BREATH * FPS)
-    # Compter les transitions breath réelles : seulement entre ayat différentes
-    n_breaths = sum(
-        1 for i in range(n - 1)
-        if verses[i+1]["surah"] != verses[i]["surah"] or verses[i+1]["ayah"] != verses[i]["ayah"]
-    )
+    # 🔧 FIX : BREATH_FRAMES (constante globale) au lieu de int(BREATH*FPS) recalculé ici —
+    # garantit que ce nombre est identique à celui utilisé pour générer le silence audio
+    # dans mix_audio(), donc zéro dérive entre les flux audio et vidéo.
+    breath_frames = BREATH_FRAMES
+    # n_breaths = nombre de transitions réelles entre ayat DIFFÉRENTES dans la séquence de versets
+    # C'est aussi le nombre de silences audio insérés par mix_audio (len(unique_audios) - 1)
+    # Les deux DOIVENT être identiques pour éviter tout désalignement audio/vidéo.
+    n_breaths = len(unique_audios) - 1  # ← aligné sur mix_audio
     total_frames  = sum(frame_counts) + breath_frames * n_breaths
     total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
