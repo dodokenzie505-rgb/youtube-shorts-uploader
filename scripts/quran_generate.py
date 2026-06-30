@@ -2397,6 +2397,13 @@ def _select_passage_and_reciter(passage):
         except (AudioMissingError, TimingsQualityError) as e:
             print(f"   ⚠ {e}")
             continue
+        except Exception as e:
+            # 🔧 Filet de sécurité : toute erreur réseau imprévue (timeout SSL,
+            # connexion réinitialisée, DNS, etc.) ne doit JAMAIS faire planter
+            # tout le process — on l'enregistre comme un échec de CE récitateur
+            # sur CE passage et on passe au suivant, comme pour un audio manquant.
+            print(f"   ⚠ Erreur inattendue avec {cand['name']} ({type(e).__name__}: {e}) — récitateur écarté pour ce passage")
+            continue
     print(f"   ❌ Aucun récitateur n'a pu fournir l'audio complet ET un karaoké précis pour « {passage['title']} »")
     return None
 
@@ -2439,7 +2446,13 @@ def generate(passage_idx=None):
                           f"Vérifie la connexion réseau / la disponibilité des CDN audio.")
                     return None
                 passage = PASSAGES[idx]
-                picked = _select_passage_and_reciter(passage)
+                try:
+                    picked = _select_passage_and_reciter(passage)
+                except Exception as e:
+                    # Même logique : une erreur imprévue sur CE passage ne doit
+                    # jamais arrêter la boucle globale — on note et on continue.
+                    print(f"   ⚠ Erreur inattendue sur « {passage['title']} » ({type(e).__name__}: {e}) — passage suivant")
+                    picked = None
                 if picked is not None:
                     break
             if picked is None:
@@ -2541,6 +2554,27 @@ def generate(passage_idx=None):
     if ok and out.exists():
         mb = out.stat().st_size / 1024 / 1024
         print(f"✅ OK: {out.name} ({mb:.1f} MB — {total_dur:.1f}s — {n} versets)")
+        # 🔧 Métadonnées pour daily_upload.py : le thème du passage (déjà en
+        # anglais dans PASSAGES, ex. "Patience and Hope") sert de titre au short.
+        # Écrit en .json à côté de la vidéo (même nom de base) ET dans un
+        # fichier "last_meta.json" générique pour un accès simple sans avoir
+        # à connaître le nom exact du fichier vidéo généré.
+        ref_first = verses[0]["ref"]
+        ref_last  = verses[-1]["ref"]
+        meta = {
+            "title": passage["title"],            # ex: "Patience and Hope"
+            "video_path": str(out),
+            "surah_range": f"{ref_first} - {ref_last}",
+            "reciter": reciter["name"],
+            "n_verses": n,
+            "duration_s": round(total_dur, 1),
+            "generated_at": datetime.datetime.now().isoformat(),
+        }
+        try:
+            (out.with_suffix(".json")).write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+            (OUT_DIR / "last_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        except Exception as e:
+            print(f"   ⚠ Écriture des métadonnées échouée (non bloquant) : {e}")
         return out
     else:
         print("❌ Erreur encodage")
@@ -2556,7 +2590,28 @@ def generate(passage_idx=None):
 if __name__ == "__main__":
     import datetime, glob
     print(f'🎲 Seed : {RUN_SEED} — {len(PASSAGES)} passages — {len(RECITERS)} récitateurs')
-    video = generate()
+
+    # 🔧 Dernier filet de sécurité : même après avoir choisi un passage et un
+    # récitateur, le rendu des frames ou l'encodage ffmpeg peuvent échouer sur
+    # un incident réseau/disque transitoire (ex: timeout SSL pendant un
+    # téléchargement d'image de fond). Plutôt que de planter tout le run avec
+    # exit code 1, on relance generate() depuis zéro (nouveau passage tiré)
+    # jusqu'à obtenir une vidéo, avec la même soupape MAX_GENERATE_ATTEMPTS.
+    video = None
+    top_attempt = 0
+    while video is None:
+        top_attempt += 1
+        if top_attempt > MAX_GENERATE_ATTEMPTS:
+            print(f"❌ Limite de sécurité atteinte ({MAX_GENERATE_ATTEMPTS} tentatives globales) — abandon.")
+            video = None
+            break
+        try:
+            video = generate()
+        except Exception as e:
+            print(f"   ⚠ Erreur inattendue pendant la génération ({type(e).__name__}: {e}) — nouvelle tentative dans {RETRY_PAUSE_S:.0f}s...")
+            video = None
+        if video is None:
+            time.sleep(RETRY_PAUSE_S)
 
     if video and Path(video).exists():
         src_path = str(video)
