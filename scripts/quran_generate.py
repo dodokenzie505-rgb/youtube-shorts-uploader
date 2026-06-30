@@ -81,6 +81,16 @@ def make_seed():
 RUN_SEED = make_seed()
 RNG      = random.Random(RUN_SEED)
 
+class AudioMissingError(Exception):
+    """Levée quand l'audio d'un verset est introuvable malgré tous les miroirs.
+    Empêche de générer une vidéo avec des frames silencieuses (verset 'sauté')."""
+    pass
+
+class TimingsQualityError(Exception):
+    """Levée quand seule une synchro 'fallback' (estimation grossière) est
+    disponible pour un verset. Empêche de générer un karaoké imprécis."""
+    pass
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PASSAGES — 35 thèmes avec plusieurs versets chacun
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1123,6 +1133,152 @@ PASSAGES = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 🔧 EXTENSION JUSQU'À 200 PASSAGES — générés depuis l'API officielle Quran.com
+# ═══════════════════════════════════════════════════════════════════════════
+# IMPORTANT : on ne tape JAMAIS de texte coranique supplémentaire "de mémoire".
+# Le risque d'erreur sur un texte sacré est trop grand. À la place, on va
+# chercher le texte arabe officiel (script Uthmani) + une traduction anglaise
+# sourcée (Dr. Mustafa Khattab, The Clear Quran) directement sur l'API
+# publique de Quran.com, pour les sourates qui ne sont pas encore couvertes
+# par CURATED_PASSAGES ci-dessus. Résultat mis en cache (le texte du Coran ne
+# change pas) pour ne faire ce travail réseau qu'une seule fois.
+CURATED_PASSAGES   = PASSAGES
+TARGET_PASSAGE_CNT = 200
+PASSAGES_CACHE_FILE = OUT_DIR / "cache" / "passages_api.json"
+PASSAGES_CACHE_MAX_AGE_S = 90 * 24 * 3600  # 90 jours — le texte du Coran est immuable
+QURAN_API_BASE = "https://api.quran.com/api/v4"
+CLEAR_QURAN_TRANSLATION_ID = 131  # Dr. Mustafa Khattab, The Clear Quran (EN)
+
+def _strip_html(text):
+    import re as _re
+    return _re.sub(r"<[^>]+>", "", text or "").strip()
+
+def _fully_covered_surahs(curated):
+    """Sourates déjà entièrement couvertes par un passage curaté (on évite
+    de générer un doublon pour ces sourates-là)."""
+    by_surah = {}
+    for p in curated:
+        for v in p["verses"]:
+            by_surah.setdefault(v["surah"], set()).add(v["ayah"])
+    covered = set()
+    for s, ayat in by_surah.items():
+        # Heuristique : si on a au moins 1 et la dernière ayah connue de cette
+        # sourate dans les passages curatés, on la considère "potentiellement"
+        # déjà traitée — la vraie déduplication se fait en comparant au
+        # verses_count réel renvoyé par l'API au moment de la génération.
+        covered.add(s)
+    return covered
+
+def _fetch_chapters_meta():
+    url = f"{QURAN_API_BASE}/chapters?language=en"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = json.loads(r.read())
+    return data.get("chapters", [])
+
+def _fetch_chapter_verses(chapter_id):
+    """Récupère TOUTES les ayat d'une sourate (texte Uthmani + traduction),
+    en paginant jusqu'à épuisement (l'API limite le nombre de résultats par page)."""
+    out, page = [], 1
+    while True:
+        url = (f"{QURAN_API_BASE}/verses/by_chapter/{chapter_id}"
+               f"?language=en&fields=text_uthmani&translations={CLEAR_QURAN_TRANSLATION_ID}"
+               f"&per_page=50&page={page}")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read())
+        verses = data.get("verses", [])
+        out.extend(verses)
+        pagination = data.get("pagination", {})
+        if not pagination.get("next_page"):
+            break
+        page = pagination["next_page"]
+    return out
+
+def _build_passages_from_api(curated, target_total):
+    need = target_total - len(curated)
+    if need <= 0:
+        return []
+    if PASSAGES_CACHE_FILE.exists():
+        try:
+            cached = json.loads(PASSAGES_CACHE_FILE.read_text())
+            age = time.time() - cached.get("ts", 0)
+            if age < PASSAGES_CACHE_MAX_AGE_S and cached.get("passages"):
+                print(f"   📖 Passages additionnels (cache) : {len(cached['passages'])}")
+                return cached["passages"][:need]
+        except Exception:
+            pass
+
+    print(f"   📖 Génération de jusqu'à {need} passages additionnels depuis l'API Quran.com...")
+    covered_surahs = _fully_covered_surahs(curated)
+    extra = []
+    try:
+        chapters = _fetch_chapters_meta()
+    except Exception as e:
+        print(f"   ⚠ Impossible de joindre l'API Quran.com ({e}) — extension annulée, on garde les {len(curated)} passages curatés.")
+        return []
+
+    CHUNK_SIZE = 7  # ~7 ayat par écran-passage, cohérent avec le style des passages curatés
+    for ch in chapters:
+        if len(extra) >= need:
+            break
+        cid = ch.get("id")
+        vcount = ch.get("verses_count", 0)
+        name_en = ch.get("translated_name", {}).get("name") or ch.get("name_simple", f"Surah {cid}")
+        name_simple = ch.get("name_simple", f"Surah {cid}")
+        if cid in covered_surahs and vcount <= CHUNK_SIZE:
+            # Petite sourate déjà entièrement couverte par les passages curatés : on saute.
+            continue
+        try:
+            verses_raw = _fetch_chapter_verses(cid)
+        except Exception as e:
+            print(f"   ⚠ Sourate {cid} ({name_simple}) ignorée — erreur réseau : {e}")
+            continue
+        if not verses_raw:
+            continue
+        # Découpage en blocs de CHUNK_SIZE ayat (la dernière sourate déjà entière
+        # si elle tient en un seul bloc, sinon plusieurs écrans successifs).
+        for start in range(0, len(verses_raw), CHUNK_SIZE):
+            if len(extra) >= need:
+                break
+            block = verses_raw[start:start + CHUNK_SIZE]
+            verses_out = []
+            for v in block:
+                ayah_num = v.get("verse_number")
+                ar_text  = v.get("text_uthmani", "").strip()
+                trs      = v.get("translations", [])
+                en_text  = _strip_html(trs[0]["text"]) if trs else ""
+                if not ar_text or not en_text:
+                    continue
+                verses_out.append({
+                    "ar": ar_text, "en": en_text,
+                    "ref": f"{cid}:{ayah_num}", "surah": cid, "ayah": ayah_num,
+                })
+            if not verses_out:
+                continue
+            if len(block) < CHUNK_SIZE:
+                title = f"{name_en} — {name_simple} (complète)" if start == 0 else f"{name_en} — {name_simple} (suite)"
+            else:
+                rng = f"{block[0].get('verse_number')}-{block[-1].get('verse_number')}"
+                title = f"{name_en} — {name_simple} {rng}"
+            extra.append({"title": title, "verses": verses_out})
+        print(f"      Sourate {cid} ({name_simple}) traitée — total additionnel: {len(extra)}/{need}")
+
+    try:
+        PASSAGES_CACHE_FILE.write_text(json.dumps({"ts": time.time(), "passages": extra}, ensure_ascii=False))
+    except Exception:
+        pass
+    print(f"   ✅ {len(extra)} passages additionnels générés depuis l'API officielle")
+    return extra
+
+try:
+    PASSAGES = CURATED_PASSAGES + _build_passages_from_api(CURATED_PASSAGES, TARGET_PASSAGE_CNT)
+except Exception as e:
+    print(f"   ⚠ Extension des passages échouée ({e}) — on continue avec les {len(CURATED_PASSAGES)} passages curatés.")
+    PASSAGES = CURATED_PASSAGES
+print(f"   📚 {len(PASSAGES)} passages disponibles au total ({len(CURATED_PASSAGES)} curatés + {len(PASSAGES) - len(CURATED_PASSAGES)} générés)")
+
+# ═══════════════════════════════════════════════════════════════════════════
 # RECITATEURS — 21 récitateurs de qualité
 # ═══════════════════════════════════════════════════════════════════════════
 RECITERS = [
@@ -1157,6 +1313,80 @@ RECITERS = [
     {"name": "Akram Al-Alaqmi",               "qid": 107, "ev": "Alafasy_128kbps",                "flag": "🇸🇦"},
     {"name": "Yusuf Al-Shuyoukhi",            "qid": 117, "ev": "Alafasy_128kbps",                "flag": "🇸🇦"},
 ]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔧 FILTRAGE DES RÉCITATEURS — vérification réelle (pas de pari au runtime)
+# ═══════════════════════════════════════════════════════════════════════════
+# Au lieu de découvrir au moment de générer une vidéo qu'un récitateur n'a pas
+# de timings exploitables (et de devoir basculer sur un autre en pleine
+# génération), on vérifie ICI, une seule fois (résultat mis en cache plusieurs
+# jours), quels récitateurs ont réellement des segments mot-à-mot disponibles
+# sur QuranCDN pour un échantillon de sourates représentatif (courte, moyenne,
+# longue, très longue). Les récitateurs qui échouent sur TOUT l'échantillon
+# sont retirés définitivement de la liste utilisée par generate() — donc on
+# ne perd plus jamais de temps à les essayer, et on ne prend plus le risque
+# de leur faire générer un karaoké en fallback.
+RECITERS_SAMPLE_CHAPTERS = (1, 18, 36, 67)   # courte / moyenne / moyenne / moyenne-longue
+RECITERS_CACHE_FILE      = OUT_DIR / "cache" / "reciters_verified.json"
+RECITERS_CACHE_MAX_AGE_S = 30 * 24 * 3600     # 30 jours
+
+def _reciter_has_segments(qid, chapter):
+    try:
+        url = f"https://api.qurancdn.com/api/qdc/audio/reciters/{qid}/audio_files?chapter={chapter}&segments=true"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        files = data.get("audio_files", [])
+        if not files:
+            return False
+        # On exige des segments non vides sur AU MOINS 80% des entrées retournées
+        # (un récitateur "OK" mais avec quelques trous isolés n'est pas rejeté ici —
+        # select_verses()/get_timings() gèrent déjà l'interpolation locale ; ce qu'on
+        # veut éliminer ce sont les récitateurs qui n'ont JAMAIS de segments).
+        with_segs = sum(1 for af in files if len(af.get("segments", [])) > 0)
+        return with_segs >= 0.8 * len(files)
+    except Exception:
+        return False
+
+def _filter_working_reciters(reciters):
+    # Cache : on ne refait la vérification réseau complète que tous les 30 jours.
+    try:
+        if RECITERS_CACHE_FILE.exists():
+            cached = json.loads(RECITERS_CACHE_FILE.read_text())
+            age = time.time() - cached.get("ts", 0)
+            if age < RECITERS_CACHE_MAX_AGE_S and cached.get("ok_qids"):
+                ok_qids = set(cached["ok_qids"])
+                kept = [r for r in reciters if r["qid"] in ok_qids]
+                if kept:
+                    print(f"   🎙 Récitateurs (cache, {len(kept)}/{len(reciters)} valides)")
+                    return kept
+    except Exception:
+        pass
+
+    print(f"   🎙 Vérification des {len(reciters)} récitateurs sur {len(RECITERS_SAMPLE_CHAPTERS)} sourates échantillon...")
+    ok, dropped = [], []
+    for r in reciters:
+        works = any(_reciter_has_segments(r["qid"], ch) for ch in RECITERS_SAMPLE_CHAPTERS)
+        (ok if works else dropped).append(r)
+    if dropped:
+        names = ", ".join(d["name"] for d in dropped)
+        print(f"   ⚠ {len(dropped)} récitateur(s) écarté(s) (aucun timing exploitable) : {names}")
+    if not ok:
+        # 🔧 Garde-fou réseau : si la vérification échoue totalement (pas d'accès
+        # réseau au moment du démarrage), on NE VIDE PAS la liste — mieux vaut
+        # garder tous les récitateurs et laisser le filet de sécurité runtime
+        # (AudioMissingError / TimingsQualityError dans generate()) faire son travail,
+        # plutôt que de se retrouver avec zéro récitateur disponible.
+        print("   ⚠ Vérification réseau impossible — conservation de tous les récitateurs par sécurité")
+        return reciters
+    try:
+        RECITERS_CACHE_FILE.write_text(json.dumps({"ts": time.time(), "ok_qids": [r["qid"] for r in ok]}))
+    except Exception:
+        pass
+    print(f"   ✅ {len(ok)}/{len(reciters)} récitateurs valides retenus")
+    return ok
+
+RECITERS = _filter_working_reciters(RECITERS)
 
 PHOTOS = [
     # Sunsets and sunrises
@@ -1654,7 +1884,16 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, hi_word, hi_streng
 
     return Image.alpha_composite(img, ov).convert("RGB")
 
-def dl_audio(verse, reciter):
+def dl_audio(verse, reciter, retries=3):
+    """
+    Télécharge l'audio d'un verset. Essaie plusieurs miroirs, avec plusieurs
+    tentatives par miroir (timeouts/erreurs réseau transitoires inclus).
+    🔧 FIX zéro-décalage : on ne laisse plus jamais passer un échec silencieux
+    suivi d'une poursuite de la génération — voir _ensure_audio() plus bas qui
+    lève une exception explicite si tous les miroirs échouent, pour éviter
+    qu'un verset se retrouve avec des frames vidéo mais sans audio
+    (ce qui désynchronise tout ce qui suit dans la vidéo).
+    """
     s, a  = verse["surah"], verse["ayah"]
     qid   = reciter["qid"]
     ev    = reciter["ev"]
@@ -1666,19 +1905,25 @@ def dl_audio(verse, reciter):
         f"https://cdn.islamic.network/quran/audio/128/{qid}/{s}{aa}.mp3",
         f"https://everyayah.com/data/{ev}/{ss}{aa}.mp3",
         f"https://everyayah.com/data/Alafasy_128kbps/{ss}{aa}.mp3",
+        f"https://verses.quran.com/{qid}/{s}{aa}.mp3",
     ]
+    last_err = None
     for url in urls:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=25) as r:
-                data = r.read()
-            if len(data) > 3000:
-                cache.write_bytes(data)
-                print(f"   Audio {cache.name} ({len(data)//1024} KB)")
-                return cache
-        except:
-            continue
-    print("   Audio indisponible")
+        for attempt in range(retries):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    data = r.read()
+                if len(data) > 3000:
+                    cache.write_bytes(data)
+                    print(f"   Audio {cache.name} ({len(data)//1024} KB)")
+                    return cache
+                last_err = f"réponse trop petite ({len(data)} octets)"
+            except Exception as e:
+                last_err = str(e)
+                time.sleep(0.8 * (attempt + 1))
+                continue
+    print(f"   ⚠ Audio INDISPONIBLE pour {verse.get('ref', f'{s}:{a}')} — dernière erreur: {last_err}")
     return None
 
 def get_audio_dur(path):
@@ -1719,6 +1964,13 @@ def _char_similarity(a, b):
     return 0.6 * pref_score + 0.4 * jaccard
 
 def get_timings(verse, reciter, audio_path, aud_dur):
+    """
+    Retourne (tlist, method) où method ∈ {"cdn", "whisper", "fallback"}.
+    🔧 FIX karaoké parfait : on garde trace de la méthode utilisée pour pouvoir,
+    en amont, rejeter les versets retombés sur le fallback proportionnel (le
+    moins précis) et forcer un changement de récitateur plutôt que d'accepter
+    une synchro approximative.
+    """
     s, a, qid = verse["surah"], verse["ayah"], reciter["qid"]
     cache     = OUT_DIR / "cache" / f"timing_{s}_{a}_{qid}.json"
     n_words   = len(verse["ar"].split())
@@ -1745,11 +1997,17 @@ def get_timings(verse, reciter, audio_path, aud_dur):
         return tlist
     if cache.exists():
         try:
-            data = json.loads(cache.read_text())
+            raw = json.loads(cache.read_text())
+            # Compat : ancien format = liste brute de timings (toujours considéré "cdn"
+            # car ce cache n'était écrit que par les branches CDN/Whisper, jamais le fallback)
+            if isinstance(raw, list):
+                data, cached_method = raw, "cdn"
+            else:
+                data, cached_method = raw.get("timings"), raw.get("method", "cdn")
             validated = _validate_and_scale(data, aud_dur)
             if validated:
-                print(f"      Timings (cache) {n_words} mots")
-                return validated
+                print(f"      Timings (cache, {cached_method}) {n_words} mots")
+                return validated, cached_method
         except:
             pass
     try:
@@ -1767,9 +2025,9 @@ def get_timings(verse, reciter, audio_path, aud_dur):
                     if len(tlist_p) == n_words:
                         validated_p = _validate_and_scale(tlist_p, aud_dur)
                         if validated_p:
-                            cache.write_text(json.dumps(validated_p))
+                            cache.write_text(json.dumps({"method": "cdn", "timings": validated_p}))
                             print(f"      ✅ QuranCDN timings OK ({n_words} mots)")
-                            return validated_p
+                            return validated_p, "cdn"
                     elif tlist_p:
                         ratio = n_words / len(tlist_p)
                         interp = []
@@ -1782,9 +2040,9 @@ def get_timings(verse, reciter, audio_path, aud_dur):
                             interp.append({"start": ts, "end": te})
                         validated_p = _validate_and_scale(interp, aud_dur)
                         if validated_p:
-                            cache.write_text(json.dumps(validated_p))
+                            cache.write_text(json.dumps({"method": "cdn", "timings": validated_p}))
                             print(f"      ✅ QuranCDN timings interpolés ({len(tlist_p)}→{n_words} mots)")
-                            return validated_p
+                            return validated_p, "cdn"
     except Exception as e_p:
         print(f"      QuranCDN: {e_p}")
     if _load_whisper() and audio_path and Path(audio_path).exists():
@@ -1803,14 +2061,14 @@ def get_timings(verse, reciter, audio_path, aud_dur):
                 tlist = _align_whisper_to_verse(verse_words, whisper_words, aud_dur)
                 validated = _validate_and_scale(tlist, aud_dur)
                 if validated:
-                    cache.write_text(json.dumps(validated))
+                    cache.write_text(json.dumps({"method": "whisper", "timings": validated}))
                     print(f"      Whisper aligne OK")
-                    return validated
+                    return validated, "whisper"
         except Exception as e:
             print(f"      Whisper erreur : {e}")
     print("      Fallback proportionnel " + verse["ref"])
     tlist = _fallback_timings(verse_words, aud_dur)
-    return _validate_and_scale(tlist, aud_dur) or tlist
+    return (_validate_and_scale(tlist, aud_dur) or tlist), "fallback"
 
 def _align_whisper_to_verse(verse_words, whisper_words, aud_dur):
     n   = len(verse_words)
@@ -1921,21 +2179,44 @@ def select_verses(passage, reciter):
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         n_words_sub = len(verse["ar"].split())
+        ref = verse.get("ref") or f"{verse['surah']}:{verse['ayah']}"
 
         if key not in ayah_audio_cache:
             # Première sous-partie de cette ayah : télécharger l'audio
             audio = dl_audio(verse, reciter)
+            # 🔧 FIX zéro-décalage / passage complet : si l'audio est introuvable,
+            # on ABANDONNE ce passage avec ce récitateur plutôt que de générer
+            # des frames vidéo pour un verset sans son (ce qui faisait "sauter"
+            # le verset à l'écoute et décalait tous les versets suivants, car
+            # mix_audio() filtrait silencieusement les audios manquants alors
+            # que les frames vidéo correspondantes étaient quand même rendues).
+            if not audio:
+                raise AudioMissingError(
+                    f"Audio introuvable pour {ref} avec le récitateur "
+                    f"{reciter.get('name', '?')} — passage abandonné pour garantir 0 décalage."
+                )
             ad    = get_audio_dur(audio) if audio else 4.5
             # Texte COMPLET de l'ayah = concaténation de toutes ses sous-parties
             full_ar    = " ".join(v["ar"] for v in ayah_groups[key])
             full_verse = dict(verse)
             full_verse["ar"] = full_ar
             # Timings mot-à-mot calculés UNE SEULE FOIS sur le texte complet
-            full_timings = get_timings(full_verse, reciter, audio, ad)
+            full_timings, timing_method = get_timings(full_verse, reciter, audio, ad)
+            # 🔧 FIX karaoké parfait : on refuse le fallback proportionnel (estimation
+            # grossière par nombre de lettres, sans aucune analyse réelle de l'audio).
+            # Seuls "cdn" (timing officiel) et "whisper" (alignement IA réel) sont
+            # acceptés. Si on tombe sur "fallback", on abandonne ce passage avec ce
+            # récitateur pour forcer generate() à essayer un autre récitateur qui,
+            # lui, a peut-être des timings CDN/Whisper exploitables pour cette ayah.
+            if timing_method == "fallback":
+                raise TimingsQualityError(
+                    f"Synchro karaoké imprécise (fallback) pour {ref} avec "
+                    f"{reciter.get('name', '?')} — récitateur écarté pour garantir un karaoké parfait."
+                )
             total_words  = len(full_ar.split())
             ayah_audio_cache[key] = (audio, ad, full_timings, total_words)
             ayah_word_offset[key] = 0
-            print(f"      {verse['surah']}:{verse['ayah']} ({round(ad,1)}s) [audio téléchargé — {total_words} mots]")
+            print(f"      {verse['surah']}:{verse['ayah']} ({round(ad,1)}s) [audio téléchargé — {total_words} mots — sync: {timing_method}]")
         else:
             print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
 
@@ -2077,11 +2358,10 @@ def encode(frames_dir, audio_path, total_dur, out_path):
         return False
     return True
 
-def generate(passage_idx=None):
-    if passage_idx is None:
-        passage_idx = RNG.randint(0, len(PASSAGES) - 1)
-    passage = PASSAGES[passage_idx % len(PASSAGES)]
-    # Auto-select reciter with verified timings on QuranCDN
+def _select_passage_and_reciter(passage):
+    """Essaie tous les récitateurs sur CE passage. Retourne soit le tuple complet
+    de select_verses() + le récitateur retenu, soit None si aucun récitateur
+    ne fournit un audio complet ET un karaoké précis pour ce passage."""
     import urllib.request as _ur, json as _json
     def _has_timings(qid, surah):
         try:
@@ -2104,7 +2384,70 @@ def generate(passage_idx=None):
 
     print("Passage: " + passage["title"])
     print("Recitateur: " + reciter["name"] + " " + reciter["flag"])
-    verses, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts = select_verses(passage, reciter)
+
+    candidates_order = [reciter] + [c for c in shuffled if c is not reciter]
+    for cand in candidates_order:
+        try:
+            print("→ Tentative avec " + cand["name"] + " " + cand["flag"])
+            result = select_verses(passage, cand)
+            verses = result[0]
+            if not verses:
+                continue
+            return result + (cand,)
+        except (AudioMissingError, TimingsQualityError) as e:
+            print(f"   ⚠ {e}")
+            continue
+    print(f"   ❌ Aucun récitateur n'a pu fournir l'audio complet ET un karaoké précis pour « {passage['title']} »")
+    return None
+
+# 🔧 FIX "1 vidéo garantie par jour" : si le passage tiré au hasard échoue avec
+# TOUS les récitateurs (audio manquant ou karaoké imprécis partout), on ne
+# renonce plus — on essaie le passage suivant, et ainsi de suite, jusqu'à en
+# trouver un qui marche parfaitement. On parcourt les 200 passages dans un
+# ordre mélangé (donc pas toujours le même ordre de repli), et si même ÇA
+# échoue (tous les passages × tous les récitateurs), on reboucle depuis le
+# début après une courte pause — utile si l'échec vient d'un souci réseau
+# transitoire qui se résorbe en quelques secondes/minutes.
+# Pas de petite limite arbitraire (genre 10 essais) : ça tourne jusqu'au
+# succès. Une seule soupape de sécurité — MAX_GENERATE_ATTEMPTS — existe pour
+# éviter qu'un run en boucle infinie ne tourne éternellement si la machine
+# n'a PLUS DU TOUT accès réseau (sinon ça boucle pour rien indéfiniment) ;
+# elle est réglée très haut par défaut, donc sans incidence en usage normal.
+MAX_GENERATE_ATTEMPTS = int(os.getenv("MAX_GENERATE_ATTEMPTS", "100000"))
+RETRY_PAUSE_S         = float(os.getenv("RETRY_PAUSE_S", "5"))
+
+def generate(passage_idx=None):
+    if passage_idx is not None:
+        # Appel ciblé sur un passage précis (ex: tests manuels) : on essaie
+        # uniquement celui-là, comportement inchangé par rapport à avant.
+        passage = PASSAGES[passage_idx % len(PASSAGES)]
+        picked = _select_passage_and_reciter(passage)
+        if picked is None:
+            return None
+        verses, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, reciter = picked
+    else:
+        order = list(range(len(PASSAGES)))
+        attempt = 0
+        picked = None
+        passage = None
+        while picked is None:
+            RNG.shuffle(order)
+            for idx in order:
+                attempt += 1
+                if attempt > MAX_GENERATE_ATTEMPTS:
+                    print(f"❌ Limite de sécurité atteinte ({MAX_GENERATE_ATTEMPTS} tentatives) — abandon. "
+                          f"Vérifie la connexion réseau / la disponibilité des CDN audio.")
+                    return None
+                passage = PASSAGES[idx]
+                picked = _select_passage_and_reciter(passage)
+                if picked is not None:
+                    break
+            if picked is None:
+                print(f"   🔁 Aucun des {len(PASSAGES)} passages n'a abouti à ce tour — "
+                      f"nouvelle passe dans {RETRY_PAUSE_S:.0f}s (tentative cumulée: {attempt})...")
+                time.sleep(RETRY_PAUSE_S)
+        verses, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, reciter = picked
+
     n = len(verses)
     if n == 0:
         print("❌ Aucun verset disponible")
