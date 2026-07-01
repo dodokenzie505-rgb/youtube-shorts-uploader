@@ -2058,12 +2058,24 @@ def get_timings(verse, reciter, audio_path, aud_dur):
                         whisper_words.append({"word": word_text, "start": float(w["start"]), "end": float(w["end"])})
             print(f"         Whisper: {len(whisper_words)} tokens / {n_words} mots")
             if whisper_words:
-                tlist = _align_whisper_to_verse(verse_words, whisper_words, aud_dur)
-                validated = _validate_and_scale(tlist, aud_dur)
-                if validated:
-                    cache.write_text(json.dumps({"method": "whisper", "timings": validated}))
-                    print(f"      Whisper aligne OK")
-                    return validated, "whisper"
+                tlist, matched = _align_whisper_to_verse(verse_words, whisper_words, aud_dur)
+                # 🔧 FIX karaoké imparfait : si moins de 60% des mots ont été
+                # réellement ancrés sur un token Whisper, le reste est comblé
+                # par interpolation linéaire — visuellement quasi identique au
+                # fallback proportionnel (le surlignage "saute" d'un bloc de
+                # mots à l'autre au lieu de suivre la récitation). On refuse
+                # ce résultat pour ne jamais l'étiqueter "whisper" (fiable) à
+                # tort ; select_verses() écartera alors ce récitateur au
+                # profit d'un autre qui a de meilleurs timings pour cette ayah.
+                match_ratio = matched / max(1, n_words)
+                if match_ratio < 0.6:
+                    print(f"      ⚠ Whisper trop peu fiable ({matched}/{n_words} mots ancrés, {match_ratio:.0%}) — rejeté")
+                else:
+                    validated = _validate_and_scale(tlist, aud_dur)
+                    if validated:
+                        cache.write_text(json.dumps({"method": "whisper", "timings": validated}))
+                        print(f"      Whisper aligné OK ({matched}/{n_words} mots ancrés, {match_ratio:.0%})")
+                        return validated, "whisper"
         except Exception as e:
             print(f"      Whisper erreur : {e}")
     print("      Fallback proportionnel " + verse["ref"])
@@ -2071,12 +2083,22 @@ def get_timings(verse, reciter, audio_path, aud_dur):
     return (_validate_and_scale(tlist, aud_dur) or tlist), "fallback"
 
 def _align_whisper_to_verse(verse_words, whisper_words, aud_dur):
+    """
+    🔧 FIX karaoké imparfait : on renvoie désormais aussi le nombre de mots
+    RÉELLEMENT ancrés sur un token Whisper (par opposition à ceux comblés
+    par interpolation linéaire dans _interpolate_gaps). Un verset où la
+    moitié des mots n'ont pas pu être ancrés produit un surlignage qui a
+    l'air de "sauter" des mots — get_timings() utilise ce compte pour
+    refuser un tel résultat plutôt que de le faire passer pour un
+    alignement fiable.
+    """
     n   = len(verse_words)
     m   = len(whisper_words)
     tlist = [None] * n
     verse_norm   = [_normalize_ar(w) for w in verse_words]
     whisper_norm = [_normalize_ar(w["word"]) for w in whisper_words]
     wi = 0
+    matched = 0
     for vi in range(n):
         if wi >= m:
             break
@@ -2084,7 +2106,10 @@ def _align_whisper_to_verse(verse_words, whisper_words, aud_dur):
         best_j   = wi
         best_scr = -1.0
         lo = max(0, wi)
-        hi = min(m, wi + 4)
+        # Fenêtre de recherche élargie (4→6) : tolère les tokens Whisper
+        # supplémentaires (répétitions, hésitations de transcription) sans
+        # perdre le fil de l'alignement pour les mots suivants.
+        hi = min(m, wi + 6)
         for j in range(lo, hi):
             scr = _char_similarity(vw, whisper_norm[j])
             if scr > best_scr:
@@ -2093,8 +2118,9 @@ def _align_whisper_to_verse(verse_words, whisper_words, aud_dur):
         if best_scr > 0.35:
             tlist[vi] = {"start": whisper_words[best_j]["start"], "end": whisper_words[best_j]["end"]}
             wi = best_j + 1
+            matched += 1
     _interpolate_gaps(tlist, aud_dur)
-    return tlist
+    return tlist, matched
 
 def _interpolate_gaps(tlist, aud_dur):
     n = len(tlist)
@@ -2310,9 +2336,26 @@ def mix_audio(audio_list, dur_list, total_dur):
     On insère donc un silence entre chaque ayah — ce qui correspond exactement
     aux transitions breath visuelles entre ayat différentes.
     """
-    valid = [(a, d) for a, d in zip(audio_list, dur_list) if a and Path(a).exists()]
+    # 🔧 FIX "verset sauté" / vidéo muette : auparavant, tout audio manquant
+    # ici était silencieusement filtré (`valid = [... if a and Path(a).exists()]`),
+    # alors que les frames vidéo de CE verset avaient déjà été rendues avec le
+    # nombre de frames prévu. Résultat possible : piste audio plus courte que
+    # la piste vidéo → tous les versets suivants désynchronisés (karaoké qui
+    # "saute"), ou pire, si TOUS les audios manquaient, la fonction renvoyait
+    # None et generate() encodait quand même une vidéo... sans aucun son, et
+    # la déclarait "✅ OK". On échoue maintenant bruyamment (exception) pour
+    # que le run global retente avec un autre récitateur/passage plutôt que
+    # de livrer une vidéo cassée.
+    missing = [a for a in audio_list if not a or not Path(a).exists()]
+    if missing:
+        raise AudioMissingError(
+            f"mix_audio: {len(missing)} fichier(s) audio manquant(s) au moment du mixage "
+            f"alors qu'ils étaient attendus (incohérence cache) — passage abandonné pour "
+            f"éviter une vidéo désynchronisée ou muette."
+        )
+    valid = list(zip(audio_list, dur_list))
     if not valid:
-        return None
+        raise AudioMissingError("mix_audio: aucun audio à mixer.")
     # Générer un fichier silence .aac de BREATH secondes
     silence_path = OUT_DIR / "cache" / "silence_breath.aac"
     if not silence_path.exists():
@@ -2545,6 +2588,9 @@ def generate(passage_idx=None):
         print(f"  Verset {vi+1} OK")
     print(f"{gi} frames rendues")
     audio_track = mix_audio(unique_audios, unique_durs, audio_dur)
+    if not audio_track or not Path(audio_track).exists():
+        # 🔧 FIX vidéo muette : ne jamais encoder sans piste audio valide.
+        raise AudioMissingError("Piste audio mixée introuvable après mix_audio() — abandon plutôt que vidéo muette.")
     today = datetime.date.today().strftime("%Y%m%d")
     out   = OUT_DIR / f"quran_{today}_s{RUN_SEED%99999:05d}.mp4"
     print(f"Encodage...")
