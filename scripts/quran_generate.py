@@ -17,10 +17,6 @@ def _ensure_installed():
         import PIL
     except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "Pillow", "-q"], check=True)
-    try:
-        import whisper
-    except ImportError:
-        subprocess.run([sys.executable, "-m", "pip", "install", "openai-whisper", "-q"], check=True)
 
 _ensure_installed()
 
@@ -31,28 +27,6 @@ import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicode
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 import urllib.request
-
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "small")
-_whisper_model = None
-_WHISPER_OK    = False
-
-def _load_whisper():
-    global _whisper_model, _WHISPER_OK
-    if _whisper_model is not None:
-        return _WHISPER_OK
-    try:
-        import whisper
-        print(f"   🎙  Chargement Whisper '{WHISPER_MODEL_SIZE}'...")
-        _whisper_model = whisper.load_model(WHISPER_MODEL_SIZE)
-        _WHISPER_OK    = True
-        print(f"   ✅ Whisper prêt")
-    except ImportError:
-        print("   ⚠  Whisper non installé")
-        _WHISPER_OK = False
-    except Exception as e:
-        print(f"   ⚠  Whisper erreur : {e}")
-        _WHISPER_OK = False
-    return _WHISPER_OK
 
 W, H      = 1080, 1920
 FPS       = 24
@@ -84,11 +58,6 @@ RNG      = random.Random(RUN_SEED)
 class AudioMissingError(Exception):
     """Levée quand l'audio d'un verset est introuvable malgré tous les miroirs.
     Empêche de générer une vidéo avec des frames silencieuses (verset 'sauté')."""
-    pass
-
-class TimingsQualityError(Exception):
-    """Levée quand seule une synchro 'fallback' (estimation grossière) est
-    disponible pour un verset. Empêche de générer un karaoké imprécis."""
     pass
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1315,78 +1284,11 @@ RECITERS = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 🔧 FILTRAGE DES RÉCITATEURS — vérification réelle (pas de pari au runtime)
+# Tous les récitateurs de la liste sont utilisables : on affiche le verset
+# entier (pas de surlignage mot-à-mot), donc on n'a plus besoin de segments
+# CDN précis par mot. La disponibilité de l'audio lui-même est déjà vérifiée
+# au moment voulu par dl_audio()/AudioMissingError dans select_verses().
 # ═══════════════════════════════════════════════════════════════════════════
-# Au lieu de découvrir au moment de générer une vidéo qu'un récitateur n'a pas
-# de timings exploitables (et de devoir basculer sur un autre en pleine
-# génération), on vérifie ICI, une seule fois (résultat mis en cache plusieurs
-# jours), quels récitateurs ont réellement des segments mot-à-mot disponibles
-# sur QuranCDN pour un échantillon de sourates représentatif (courte, moyenne,
-# longue, très longue). Les récitateurs qui échouent sur TOUT l'échantillon
-# sont retirés définitivement de la liste utilisée par generate() — donc on
-# ne perd plus jamais de temps à les essayer, et on ne prend plus le risque
-# de leur faire générer un karaoké en fallback.
-RECITERS_SAMPLE_CHAPTERS = (1, 18, 36, 67)   # courte / moyenne / moyenne / moyenne-longue
-RECITERS_CACHE_FILE      = OUT_DIR / "cache" / "reciters_verified.json"
-RECITERS_CACHE_MAX_AGE_S = 30 * 24 * 3600     # 30 jours
-
-def _reciter_has_segments(qid, chapter):
-    try:
-        url = f"https://api.qurancdn.com/api/qdc/audio/reciters/{qid}/audio_files?chapter={chapter}&segments=true"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-        files = data.get("audio_files", [])
-        if not files:
-            return False
-        # On exige des segments non vides sur AU MOINS 80% des entrées retournées
-        # (un récitateur "OK" mais avec quelques trous isolés n'est pas rejeté ici —
-        # select_verses()/get_timings() gèrent déjà l'interpolation locale ; ce qu'on
-        # veut éliminer ce sont les récitateurs qui n'ont JAMAIS de segments).
-        with_segs = sum(1 for af in files if len(af.get("segments", [])) > 0)
-        return with_segs >= 0.8 * len(files)
-    except Exception:
-        return False
-
-def _filter_working_reciters(reciters):
-    # Cache : on ne refait la vérification réseau complète que tous les 30 jours.
-    try:
-        if RECITERS_CACHE_FILE.exists():
-            cached = json.loads(RECITERS_CACHE_FILE.read_text())
-            age = time.time() - cached.get("ts", 0)
-            if age < RECITERS_CACHE_MAX_AGE_S and cached.get("ok_qids"):
-                ok_qids = set(cached["ok_qids"])
-                kept = [r for r in reciters if r["qid"] in ok_qids]
-                if kept:
-                    print(f"   🎙 Récitateurs (cache, {len(kept)}/{len(reciters)} valides)")
-                    return kept
-    except Exception:
-        pass
-
-    print(f"   🎙 Vérification des {len(reciters)} récitateurs sur {len(RECITERS_SAMPLE_CHAPTERS)} sourates échantillon...")
-    ok, dropped = [], []
-    for r in reciters:
-        works = any(_reciter_has_segments(r["qid"], ch) for ch in RECITERS_SAMPLE_CHAPTERS)
-        (ok if works else dropped).append(r)
-    if dropped:
-        names = ", ".join(d["name"] for d in dropped)
-        print(f"   ⚠ {len(dropped)} récitateur(s) écarté(s) (aucun timing exploitable) : {names}")
-    if not ok:
-        # 🔧 Garde-fou réseau : si la vérification échoue totalement (pas d'accès
-        # réseau au moment du démarrage), on NE VIDE PAS la liste — mieux vaut
-        # garder tous les récitateurs et laisser le filet de sécurité runtime
-        # (AudioMissingError / TimingsQualityError dans generate()) faire son travail,
-        # plutôt que de se retrouver avec zéro récitateur disponible.
-        print("   ⚠ Vérification réseau impossible — conservation de tous les récitateurs par sécurité")
-        return reciters
-    try:
-        RECITERS_CACHE_FILE.write_text(json.dumps({"ts": time.time(), "ok_qids": [r["qid"] for r in ok]}))
-    except Exception:
-        pass
-    print(f"   ✅ {len(ok)}/{len(reciters)} récitateurs valides retenus")
-    return ok
-
-RECITERS = _filter_working_reciters(RECITERS)
 
 PHOTOS = [
     # Sunsets and sunrises
@@ -1468,8 +1370,7 @@ def fonts():
             "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
         ]
         _FONTS_CACHE = {
-            "ar":      _load_font(AR, 92),    # +6 : arabe plus lisible
-            "ar_bold": _load_font(AR, 98),    # +8 : mot courant plus imposant
+            "ar":      _load_font(AR, 96),    # légèrement agrandi : plus de place sans le halo mot-à-mot
             "en":      _load_font(IT, 54),    # +2 : traduction légèrement plus grande
             "ref":     _load_font(RG, 42),    # +2
             "small":   _load_font(RG, 30),    # +2
@@ -1501,141 +1402,44 @@ def _wrap_words(words, font, max_w):
         lines.append(cur)
     return lines
 
-VISUAL_LEAD_S = 0.15   # Anticipe le surlignage de 150ms pour compenser la latence perceptive
-
 def _ease_inout(t):
     t = max(0.0, min(1.0, t))
     return t * t * (3.0 - 2.0 * t)
 
-class SyncEngine:
-    FADE_S = 0.080
-    def __init__(self, timings, n_audio_frames, aud_dur, fps=FPS):
-        self._timings        = timings or []
-        self._n_audio_frames = max(1, n_audio_frames)
-        self._aud_dur        = max(0.001, aud_dur)
-        self._fps            = fps
-        self._n_words        = len(self._timings)
-    def frame_to_t(self, frame_index):
-        dt = self._aud_dur / self._n_audio_frames
-        return min(frame_index * dt, self._aud_dur)
-    def word_at(self, frame_index):
-        if not self._timings:
-            return 0
-        t = self.frame_to_t(frame_index) + VISUAL_LEAD_S
-        segs = self._timings
-        if t >= segs[-1]["end"]:
-            return self._n_words - 1
-        if t < segs[0]["start"]:
-            return 0
-        for i, seg in enumerate(segs):
-            if seg["start"] <= t < seg["end"]:
-                return i
-        for i in range(len(segs) - 1):
-            if segs[i]["end"] <= t < segs[i + 1]["start"]:
-                return i
-        return 0
-    def hi_strength(self, frame_index):
-        if not self._timings:
-            return 1.0
-        # VISUAL_LEAD_S est déjà appliqué dans word_at() — on l'applique ici
-        # avec la même valeur pour rester cohérent avec le mot sélectionné,
-        # sans le doubler (bug de décalage ×2).
-        t    = self.frame_to_t(frame_index) + VISUAL_LEAD_S
-        segs = self._timings
-        # Avant le premier mot : pas de highlight
-        if t < segs[0]["start"]:
-            return 0.0
-        # Après la fin du dernier mot : le dernier mot reste allumé
-        # (pas de fade-out qui crée le double flash)
-        if t >= segs[-1]["end"]:
-            return 1.0
-        wi    = self.word_at(frame_index)
-        seg   = segs[wi]
-        t_s   = seg["start"]
-        t_e   = seg["end"]
-        fade  = self.FADE_S
-        # Pendant le mot courant
-        if t_s <= t < t_e:
-            if t < t_s + fade:
-                return _ease_inout((t - t_s) / fade)
-            return 1.0
-        # Entre deux mots : décroissance rapide
-        if wi < self._n_words - 1:
-            next_start = segs[wi + 1]["start"]
-            if t_e <= t < next_start:
-                silence = next_start - t_e
-                elapsed = t - t_e
-                decay   = max(fade, silence * 0.25)
-                if elapsed < decay:
-                    return _ease_inout(1.0 - elapsed / decay)
-                return 0.0
-        return 1.0
-
-_HI_GLOW_COLOR   = (255, 215, 80)          # Or pur pour le mot courant
-_HI_GLOW_ALPHA1  = 90                      # Glow externe plus visible
-_HI_GLOW_ALPHA2  = 140                     # Glow interne très lumineux
-_HI_GLOW_RADIUS1 = 22                      # Halo large
-_HI_GLOW_RADIUS2 = 10                      # Halo serré
-_HI_WORD_COLOR   = (255, 245, 180)         # Mot courant : blanc-or
-_HI_UNDER_H      = 3                       # Soulignement fin sous le mot
-_HI_UNDER_OFFSET = 4                       # Décalage soulignement
-_HI_UNDER_COLOR  = (255, 215, 80)          # Couleur or pour le soulignement
-_PAST_COLOR      = (160, 160, 180)         # Mots passés : gris-bleu doux
-_FUTURE_COLOR    = (220, 220, 235)         # Mots à venir : blanc nacré
+_HI_GLOW_COLOR   = (255, 215, 80)          # (conservé pour cohérence de palette ailleurs)
+_HI_WORD_COLOR   = (255, 245, 180)
+_PAST_COLOR      = (160, 160, 180)
+_FUTURE_COLOR    = (220, 220, 235)
 _SHADOW_OFFSETS  = [(-2,-2),(2,-2),(-2,2),(2,2),(0,4),(1,3),(-1,3)]  # Ombre plus riche
 _EN_COLOR        = (240, 240, 255)         # Traduction : blanc légèrement bleuté
+_AR_COLOR        = (255, 250, 235)         # Arabe : blanc chaud, légèrement doré
 
-def _glow_word(draw, x, y, w, font, hi_strength, alpha):
-    if hi_strength <= 0.01:
-        return
-    for radius, base_a in [(_HI_GLOW_RADIUS1, _HI_GLOW_ALPHA1), (_HI_GLOW_RADIUS2, _HI_GLOW_ALPHA2)]:
-        ga = int(base_a * hi_strength * (alpha / 255.0))
-        if ga < 2:
-            continue
-        for ddx in range(-radius, radius + 1, max(1, radius // 3)):
-            for ddy in range(-radius // 2, radius // 2 + 1, max(1, radius // 4)):
-                draw.text((x + ddx, y + ddy), w, font=font, fill=(*_HI_GLOW_COLOR, max(0, min(255, ga))))
-
-def draw_arabic_karaoke(draw, text, font, font_hi, cx, y_start, max_w, highlight_idx, alpha, hi_strength=1.0, line_gap=30):
+def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32):
+    """
+    Affiche le verset arabe complet, statique (pas de surlignage mot-à-mot) :
+    le verset entier est visible pendant toute sa récitation, puis cède la
+    place au suivant. Plus simple et 100% fiable — aucune dépendance à un
+    alignement mot-à-mot (CDN segments / Whisper) qui pouvait être imprécis.
+    """
     words = text.split()
     if not words:
         return 0
     lines   = _wrap_words(words, font, max_w)
     fh      = _line_h(font) + 6
-    fh_hi   = _line_h(font_hi) + 6
     y       = y_start
     total_h = 0
     for line in lines:
-        hi_in  = any(idx == highlight_idx for idx, _, _ in line)
-        line_w = 0
-        for k, (idx, w, _) in enumerate(line):
-            f_use   = font_hi if idx == highlight_idx else font
-            line_w += _word_w(f_use, w) + (WORD_GAP if k > 0 else 0)
+        line_w = sum(_word_w(font, w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
         x      = cx + line_w // 2
-        line_h = fh_hi if hi_in else fh
-        for k, (idx, w, _) in enumerate(line):
-            is_hi   = (idx == highlight_idx)
-            is_past = (idx < highlight_idx)
-            f_use   = font_hi if is_hi else font
-            ww      = _word_w(f_use, w)
-            x      -= ww
-            dy_off = (fh_hi - fh) // 2 if (hi_in and not is_hi) else 0
-            word_y = y + dy_off
-            if is_hi:
-                _glow_word(draw, x, word_y, w, f_use, hi_strength, alpha)
-            shad_a = min(alpha, 150)
+        for k, (_, w, _) in enumerate(line):
+            ww = _word_w(font, w)
+            x -= ww
             for dx, dy in _SHADOW_OFFSETS:
-                draw.text((x + dx, word_y + dy), w, font=f_use, fill=(0, 0, 0, shad_a))
-            if is_hi:
-                color = (*_HI_WORD_COLOR, alpha)       # Or-blanc pour le mot courant
-            elif is_past:
-                color = (*_PAST_COLOR, int(alpha * 0.65))   # Passés plus discrets
-            else:
-                color = (*_FUTURE_COLOR, int(alpha * 0.90))  # À venir légèrement atténués
-            draw.text((x, word_y), w, font=f_use, fill=color)
+                draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
+            draw.text((x, y), w, font=font, fill=(*_AR_COLOR, alpha))
             x -= WORD_GAP
-        y       += line_h + line_gap
-        total_h += line_h + line_gap
+        y       += fh + line_gap
+        total_h += fh + line_gap
     return total_h
 
 def dl_image(url, path):
@@ -1718,13 +1522,19 @@ def make_params(n):
         "kb":            kb,
     }
 
-def render_frame(base_img, verse, reciter, title, alpha_frac, hi_word, hi_strength, verse_num, total_verses):
+def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_verses):
     import re as _re, math as _math
     img = base_img.copy().convert("RGBA")
     ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(ov, "RGBA")
     f   = fonts()
-    a   = int(255 * max(0., min(1., alpha_frac)))
+    af  = max(0., min(1., alpha_frac))
+    a   = int(255 * af)
+    # 🎨 Animation d'entrée/sortie : le bloc de texte "monte" doucement en
+    # place pendant le fade-in et "redescend" légèrement pendant le fade-out,
+    # au lieu d'un simple fondu statique. Effet subtil (≤18px) pour rester
+    # élégant plutôt que voyant.
+    dy_anim = int((1 - _ease_inout(af)) * 18)
 
     # ── Layout ───────────────────────────────────────────────────────────────
     words_ar  = verse["ar"].split()
@@ -1734,8 +1544,8 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, hi_word, hi_streng
     en_lines  = verse["en"].split("\n")
     en_h      = len(en_lines) * 68
     block_h   = ar_est_h + 30 + 56 + 24 + en_h
-    ar_top    = H // 2 - block_h // 2 + 20
-    mid       = H // 2
+    ar_top    = H // 2 - block_h // 2 + 20 + dy_anim
+    mid       = H // 2 + dy_anim
 
     # ── 1. Fond dégradé central — vignette plus dramatique + teinte bleue-nuit
     panel_top    = mid - block_h // 2 - 130
@@ -1783,11 +1593,10 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, hi_word, hi_streng
     # Texte principal
     d.text((tx, title_y), title, font=f["title"], fill=(255, 220, 100, int(a*0.95)))
 
-    # ── 4. Texte arabe karaoké ───────────────────────────────────────────────
-    ar_h = draw_arabic_karaoke(
-        d, verse["ar"], f["ar"], f["ar_bold"],
-        cx=W//2, y_start=ar_top, max_w=920,
-        highlight_idx=hi_word, alpha=a, hi_strength=hi_strength, line_gap=32
+    # ── 4. Verset arabe — affiché en entier, statique ────────────────────────
+    ar_h = draw_arabic_text(
+        d, verse["ar"], f["ar"],
+        cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=32
     )
 
     # ── 5. Séparateur — ligne dorée ornementale avec fleurs ──────────────────
@@ -1827,16 +1636,18 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, hi_word, hi_streng
     d.text((rx+2, ref_y+3), _clean_ref, font=f["ref"], fill=(0, 0, 0, int(a*0.55)))
     d.text((rx, ref_y), _clean_ref, font=f["ref"], fill=(255, 215, 80, int(a*0.95)))
 
-    # ── 7. Traduction anglaise ───────────────────────────────────────────────
-    en_y = ref_y + 56
+    # ── 7. Traduction anglaise (fondu légèrement retardé sur l'arabe) ────────
+    en_af = max(0., min(1., (af - 0.12) / 0.88))
+    a_en  = int(255 * _ease_inout(en_af))
+    en_y  = ref_y + 56
     for i, line in enumerate(en_lines):
         lw = f["en"].getbbox(line)[2] - f["en"].getbbox(line)[0]
         lx = W//2 - lw//2
         ly = en_y + i * 68
         # Ombre riche
         for dx, dy in _SHADOW_OFFSETS:
-            d.text((lx+dx, ly+dy), line, font=f["en"], fill=(0, 0, 0, min(255, int(a*0.55))))
-        d.text((lx, ly), line, font=f["en"], fill=(*_EN_COLOR, a))
+            d.text((lx+dx, ly+dy), line, font=f["en"], fill=(0, 0, 0, min(255, int(a_en*0.55))))
+        d.text((lx, ly), line, font=f["en"], fill=(*_EN_COLOR, a_en))
 
     # ── 8. Bande basse ornementale ───────────────────────────────────────────
     low_band_y = panel_bottom - 28
@@ -1934,262 +1745,33 @@ def get_audio_dur(path):
     except:
         return 4.5
 
-def _normalize_ar(text):
-    result = []
-    for c in text:
-        cp = ord(c)
-        if (0x0610 <= cp <= 0x061A or 0x064B <= cp <= 0x065F or cp == 0x0670 or cp == 0x06D6 or cp == 0x06DC):
-            continue
-        if cp == 0x0640:
-            continue
-        result.append(c)
-    normalized = "".join(result).strip()
-    normalized = normalized.replace("\u0623", "\u0627").replace("\u0625", "\u0627").replace("\u0622", "\u0627")
-    normalized = normalized.replace("\u0649", "\u064a").replace("\u0629", "\u0647")
-    return normalized
-
-def _char_similarity(a, b):
-    if not a or not b:
-        return 0.0
-    pref = 0
-    for ca, cb in zip(a, b):
-        if ca == cb:
-            pref += 1
-        else:
-            break
-    set_a = set(a)
-    set_b = set(b)
-    jaccard = len(set_a & set_b) / max(1, len(set_a | set_b))
-    pref_score = pref / max(len(a), len(b))
-    return 0.6 * pref_score + 0.4 * jaccard
-
-def get_timings(verse, reciter, audio_path, aud_dur):
+def _screen_char_weights(sub_parts):
     """
-    Retourne (tlist, method) où method ∈ {"cdn", "whisper", "fallback"}.
-    🔧 FIX karaoké parfait : on garde trace de la méthode utilisée pour pouvoir,
-    en amont, rejeter les versets retombés sur le fallback proportionnel (le
-    moins précis) et forcer un changement de récitateur plutôt que d'accepter
-    une synchro approximative.
+    Pour une ayah affichée sur plusieurs écrans (ex. Ayat Al-Kursi a→h), répartit
+    la durée audio totale entre les écrans proportionnellement à la longueur du
+    texte de chacun — un écran avec deux fois plus de mots reste affiché deux
+    fois plus longtemps. Beaucoup plus simple et 100% robuste qu'un alignement
+    mot-à-mot (segments CDN / Whisper) : aucun appel réseau supplémentaire,
+    aucun risque d'alignement raté, un résultat toujours cohérent.
     """
-    s, a, qid = verse["surah"], verse["ayah"], reciter["qid"]
-    cache     = OUT_DIR / "cache" / f"timing_{s}_{a}_{qid}.json"
-    n_words   = len(verse["ar"].split())
-    verse_words = verse["ar"].split()
-    def _validate_and_scale(tlist, dur):
-        if not tlist or len(tlist) != n_words:
-            return None
-        # Rebaser à t=0 : si le premier mot commence avec un décalage (intro silence)
-        # on soustrait cet offset pour que le surlignage commence dès le début de l'audio
-        first_start = tlist[0]["start"]
-        if first_start > 0.05:
-            tlist = [{"start": max(0.0, t["start"] - first_start),
-                      "end":   max(0.0, t["end"]   - first_start)} for t in tlist]
-        last_end = tlist[-1]["end"]
-        # Rescaler pour que last_end == dur
-        if last_end > 0.01 and abs(last_end - dur) > 0.05:
-            k     = dur / last_end
-            tlist = [{"start": t["start"] * k, "end": t["end"] * k} for t in tlist]
-        tlist = [{"start": max(0.0, min(t["start"], dur)), "end": max(0.0, min(t["end"], dur))} for t in tlist]
-        for i in range(1, len(tlist)):
-            if tlist[i]["start"] < tlist[i-1]["end"]:
-                tlist[i]["start"] = tlist[i-1]["end"]
-        tlist[-1]["end"] = dur
-        return tlist
-    if cache.exists():
-        try:
-            raw = json.loads(cache.read_text())
-            # Compat : ancien format = liste brute de timings (toujours considéré "cdn"
-            # car ce cache n'était écrit que par les branches CDN/Whisper, jamais le fallback)
-            if isinstance(raw, list):
-                data, cached_method = raw, "cdn"
-            else:
-                data, cached_method = raw.get("timings"), raw.get("method", "cdn")
-            validated = _validate_and_scale(data, aud_dur)
-            if validated:
-                print(f"      Timings (cache, {cached_method}) {n_words} mots")
-                return validated, cached_method
-        except:
-            pass
-    try:
-        _qid_p = str(reciter["qid"])
-        _surah_p = str(verse["surah"])
-        url_p = "https://api.qurancdn.com/api/qdc/audio/reciters/" + _qid_p + "/audio_files?chapter=" + _surah_p + "&segments=true"
-        req_p = urllib.request.Request(url_p, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-        with urllib.request.urlopen(req_p, timeout=15) as r_p:
-            data_p = json.loads(r_p.read())
-        for af_p in data_p.get("audio_files", []):
-            if str(af_p.get("ayah", "")) == str(verse["ayah"]):
-                segs_p = af_p.get("segments", [])
-                if segs_p:
-                    tlist_p = [{"start": sg[1]/1000.0, "end": sg[2]/1000.0} for sg in segs_p if len(sg) >= 3]
-                    if len(tlist_p) == n_words:
-                        validated_p = _validate_and_scale(tlist_p, aud_dur)
-                        if validated_p:
-                            cache.write_text(json.dumps({"method": "cdn", "timings": validated_p}))
-                            print(f"      ✅ QuranCDN timings OK ({n_words} mots)")
-                            return validated_p, "cdn"
-                    elif tlist_p:
-                        ratio = n_words / len(tlist_p)
-                        interp = []
-                        for i in range(n_words):
-                            src_i = min(int(i / ratio), len(tlist_p)-1)
-                            src_i2 = min(src_i+1, len(tlist_p)-1)
-                            alpha_v = (i/ratio) - src_i
-                            ts = tlist_p[src_i]["start"] * (1-alpha_v) + tlist_p[src_i2]["start"] * alpha_v
-                            te = tlist_p[src_i]["end"] * (1-alpha_v) + tlist_p[src_i2]["end"] * alpha_v
-                            interp.append({"start": ts, "end": te})
-                        validated_p = _validate_and_scale(interp, aud_dur)
-                        if validated_p:
-                            cache.write_text(json.dumps({"method": "cdn", "timings": validated_p}))
-                            print(f"      ✅ QuranCDN timings interpolés ({len(tlist_p)}→{n_words} mots)")
-                            return validated_p, "cdn"
-    except Exception as e_p:
-        print(f"      QuranCDN: {e_p}")
-    if _load_whisper() and audio_path and Path(audio_path).exists():
-        try:
-            import whisper
-            print(f"      Whisper aligne {Path(audio_path).name}...")
-            result = _whisper_model.transcribe(str(audio_path), language="ar", word_timestamps=True, verbose=False, initial_prompt="بسم الله الرحمن الرحيم", temperature=0.0, condition_on_previous_text=False)
-            whisper_words = []
-            for seg in result.get("segments", []):
-                for w in seg.get("words", []):
-                    word_text = w["word"].strip()
-                    if word_text:
-                        whisper_words.append({"word": word_text, "start": float(w["start"]), "end": float(w["end"])})
-            print(f"         Whisper: {len(whisper_words)} tokens / {n_words} mots")
-            if whisper_words:
-                tlist, matched = _align_whisper_to_verse(verse_words, whisper_words, aud_dur)
-                # 🔧 FIX karaoké imparfait : si moins de 60% des mots ont été
-                # réellement ancrés sur un token Whisper, le reste est comblé
-                # par interpolation linéaire — visuellement quasi identique au
-                # fallback proportionnel (le surlignage "saute" d'un bloc de
-                # mots à l'autre au lieu de suivre la récitation). On refuse
-                # ce résultat pour ne jamais l'étiqueter "whisper" (fiable) à
-                # tort ; select_verses() écartera alors ce récitateur au
-                # profit d'un autre qui a de meilleurs timings pour cette ayah.
-                match_ratio = matched / max(1, n_words)
-                if match_ratio < 0.6:
-                    print(f"      ⚠ Whisper trop peu fiable ({matched}/{n_words} mots ancrés, {match_ratio:.0%}) — rejeté")
-                else:
-                    validated = _validate_and_scale(tlist, aud_dur)
-                    if validated:
-                        cache.write_text(json.dumps({"method": "whisper", "timings": validated}))
-                        print(f"      Whisper aligné OK ({matched}/{n_words} mots ancrés, {match_ratio:.0%})")
-                        return validated, "whisper"
-        except Exception as e:
-            print(f"      Whisper erreur : {e}")
-    print("      Fallback proportionnel " + verse["ref"])
-    tlist = _fallback_timings(verse_words, aud_dur)
-    return (_validate_and_scale(tlist, aud_dur) or tlist), "fallback"
-
-def _align_whisper_to_verse(verse_words, whisper_words, aud_dur):
-    """
-    🔧 FIX karaoké imparfait : on renvoie désormais aussi le nombre de mots
-    RÉELLEMENT ancrés sur un token Whisper (par opposition à ceux comblés
-    par interpolation linéaire dans _interpolate_gaps). Un verset où la
-    moitié des mots n'ont pas pu être ancrés produit un surlignage qui a
-    l'air de "sauter" des mots — get_timings() utilise ce compte pour
-    refuser un tel résultat plutôt que de le faire passer pour un
-    alignement fiable.
-    """
-    n   = len(verse_words)
-    m   = len(whisper_words)
-    tlist = [None] * n
-    verse_norm   = [_normalize_ar(w) for w in verse_words]
-    whisper_norm = [_normalize_ar(w["word"]) for w in whisper_words]
-    wi = 0
-    matched = 0
-    for vi in range(n):
-        if wi >= m:
-            break
-        vw       = verse_norm[vi]
-        best_j   = wi
-        best_scr = -1.0
-        lo = max(0, wi)
-        # Fenêtre de recherche élargie (4→6) : tolère les tokens Whisper
-        # supplémentaires (répétitions, hésitations de transcription) sans
-        # perdre le fil de l'alignement pour les mots suivants.
-        hi = min(m, wi + 6)
-        for j in range(lo, hi):
-            scr = _char_similarity(vw, whisper_norm[j])
-            if scr > best_scr:
-                best_scr = scr
-                best_j   = j
-        if best_scr > 0.35:
-            tlist[vi] = {"start": whisper_words[best_j]["start"], "end": whisper_words[best_j]["end"]}
-            wi = best_j + 1
-            matched += 1
-    _interpolate_gaps(tlist, aud_dur)
-    return tlist, matched
-
-def _interpolate_gaps(tlist, aud_dur):
-    n = len(tlist)
-    if not any(t is not None for t in tlist):
-        for i in range(n):
-            tlist[i] = {"start": aud_dur * i / n, "end": aud_dur * (i + 1) / n}
-        return
-    first_known = next((i for i, t in enumerate(tlist) if t is not None), 0)
-    for i in range(first_known):
-        t_end = tlist[first_known]["start"]
-        tlist[i] = {"start": t_end * i / max(1, first_known), "end": t_end * (i + 1) / max(1, first_known)}
-    last_known = max(i for i, t in enumerate(tlist) if t is not None)
-    for i in range(last_known + 1, n):
-        t_start = tlist[last_known]["end"]
-        remaining = aud_dur - t_start
-        gap = n - last_known - 1
-        pos = i - last_known - 1
-        tlist[i] = {"start": t_start + remaining * pos / max(1, gap), "end": t_start + remaining * (pos + 1) / max(1, gap)}
-    i = 0
-    while i < n:
-        if tlist[i] is None:
-            j = i + 1
-            while j < n and tlist[j] is None:
-                j += 1
-            t_left  = tlist[i-1]["end"]   if i > 0 else 0.0
-            t_right = tlist[j]["start"]   if j < n else aud_dur
-            gap_n   = j - i
-            for k in range(gap_n):
-                frac = k / gap_n
-                frac2 = (k + 1) / gap_n
-                tlist[i + k] = {"start": t_left + (t_right - t_left) * frac, "end": t_left + (t_right - t_left) * frac2}
-            i = j
-        else:
-            i += 1
-
-def _fallback_timings(words, aud_dur):
-    def char_count(w):
-        return max(1, sum(1 for c in w if unicodedata.category(c).startswith("L")))
-    counts  = [char_count(w) for w in words]
-    total_c = sum(counts)
-    intro   = min(0.15, aud_dur * 0.04)
-    usable  = aud_dur - intro - min(0.08, aud_dur * 0.02)
-    tlist   = []
-    t       = intro
-    for c in counts:
-        dw = usable * c / total_c
-        tlist.append({"start": t, "end": t + dw})
-        t += dw
-    tlist[-1]["end"] = aud_dur
-    return tlist
+    def char_count(text):
+        return max(1, sum(1 for c in text if unicodedata.category(c).startswith("L")))
+    return [char_count(v["ar"]) for v in sub_parts]
 
 def select_verses(passage, reciter):
-    """v7.2 : TOUS les versets du passage.
-    Les sous-parties d'un même verset (même surah+ayah) partagent UN seul audio.
+    """v8 : TOUS les versets du passage, affichage verset entier (pas de karaoké
+    mot-à-mot). Les sous-parties d'un même verset (même surah+ayah) partagent
+    UN seul audio.
 
-    🔧 FIX karaoké : pour une ayah découpée en plusieurs écrans (ex. Ayat Al-Kursi
-    a→h), les timings mot-à-mot sont calculés UNE SEULE FOIS sur le texte COMPLET
-    de l'ayah (concaténation de toutes ses sous-parties, dans l'ordre du passage),
-    puis chaque sous-partie reçoit :
-      - sa TRANCHE de timings (les mots qui la concernent),
-      - sa FENÊTRE TEMPORELLE dans l'audio complet (window_start → window_end),
-        déterminée par les timings réels des mots voisins,
-      - des timings RELOCALISÉS à 0 dans cette fenêtre.
-    Ainsi chaque écran ne dure que le temps réellement nécessaire à la récitation
-    de SES mots, et la somme des fenêtres de tous les écrans d'une ayah == durée
-    totale de l'audio de cette ayah. Le surlignage reste donc parfaitement
-    synchronisé, écran après écran, du début à la fin de l'ayah.
+    Pour une ayah découpée en plusieurs écrans (ex. Ayat Al-Kursi a→h), la
+    durée audio totale de l'ayah est répartie entre ses écrans au prorata de
+    la longueur du texte de chacun (_screen_char_weights) — pas besoin de
+    timings mot-à-mot précis puisqu'on n'affiche plus le surlignage, juste le
+    verset entier pendant sa fenêtre. Beaucoup plus simple et 100% fiable :
+    aucun appel réseau supplémentaire pour des segments, aucun risque
+    d'alignement raté qui aurait pu faire "sauter" un écran.
     """
-    sel, audios, aud_durs, timings_list, engines, frame_counts = [], [], [], [], [], []
+    sel, audios, aud_durs, frame_counts = [], [], [], []
 
     # Regrouper les sous-parties consécutives par ayah réelle (surah, ayah)
     # Ex: Ayat Al-Kursi a→h ont toutes surah=2, ayah=255 → 1 seul audio
@@ -2198,13 +1780,13 @@ def select_verses(passage, reciter):
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         ayah_groups.setdefault(key, []).append(verse)
 
-    ayah_audio_cache = {}   # (surah, ayah, qid) → (audio_path, ad, full_timings, total_words)
-    ayah_word_offset = {}   # (surah, ayah, qid) → nb de mots déjà consommés par les sous-parties précédentes
-    ayah_frames_emitted = {}  # (surah, ayah, qid) → nb de frames déjà émises (arrondi cumulatif)
+    ayah_audio_cache    = {}  # (s,a,qid) → (audio_path, ad, weights, total_weight)
+    ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés par les sous-parties précédentes
+    ayah_subpart_idx    = {}  # (s,a,qid) → index de la prochaine sous-partie dans ayah_groups[key]
+    ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
 
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
-        n_words_sub = len(verse["ar"].split())
         ref = verse.get("ref") or f"{verse['surah']}:{verse['ayah']}"
 
         if key not in ayah_audio_cache:
@@ -2213,85 +1795,44 @@ def select_verses(passage, reciter):
             # 🔧 FIX zéro-décalage / passage complet : si l'audio est introuvable,
             # on ABANDONNE ce passage avec ce récitateur plutôt que de générer
             # des frames vidéo pour un verset sans son (ce qui faisait "sauter"
-            # le verset à l'écoute et décalait tous les versets suivants, car
-            # mix_audio() filtrait silencieusement les audios manquants alors
-            # que les frames vidéo correspondantes étaient quand même rendues).
+            # le verset à l'écoute et décalait tous les versets suivants).
             if not audio:
                 raise AudioMissingError(
                     f"Audio introuvable pour {ref} avec le récitateur "
                     f"{reciter.get('name', '?')} — passage abandonné pour garantir 0 décalage."
                 )
-            ad    = get_audio_dur(audio) if audio else 4.5
-            # Texte COMPLET de l'ayah = concaténation de toutes ses sous-parties
-            full_ar    = " ".join(v["ar"] for v in ayah_groups[key])
-            full_verse = dict(verse)
-            full_verse["ar"] = full_ar
-            # Timings mot-à-mot calculés UNE SEULE FOIS sur le texte complet
-            full_timings, timing_method = get_timings(full_verse, reciter, audio, ad)
-            # 🔧 FIX karaoké parfait : on refuse le fallback proportionnel (estimation
-            # grossière par nombre de lettres, sans aucune analyse réelle de l'audio).
-            # Seuls "cdn" (timing officiel) et "whisper" (alignement IA réel) sont
-            # acceptés. Si on tombe sur "fallback", on abandonne ce passage avec ce
-            # récitateur pour forcer generate() à essayer un autre récitateur qui,
-            # lui, a peut-être des timings CDN/Whisper exploitables pour cette ayah.
-            if timing_method == "fallback":
-                raise TimingsQualityError(
-                    f"Synchro karaoké imprécise (fallback) pour {ref} avec "
-                    f"{reciter.get('name', '?')} — récitateur écarté pour garantir un karaoké parfait."
-                )
-            total_words  = len(full_ar.split())
-            ayah_audio_cache[key] = (audio, ad, full_timings, total_words)
-            ayah_word_offset[key] = 0
-            print(f"      {verse['surah']}:{verse['ayah']} ({round(ad,1)}s) [audio téléchargé — {total_words} mots — sync: {timing_method}]")
+            ad      = get_audio_dur(audio) if audio else 4.5
+            weights = _screen_char_weights(ayah_groups[key])
+            ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
+            ayah_weight_before[key] = 0
+            ayah_subpart_idx[key]   = 0
+            print(f"      {verse['surah']}:{verse['ayah']} ({round(ad,1)}s) [audio téléchargé — {len(weights)} écran(s)]")
         else:
             print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
 
-        audio, ad, full_timings, total_words = ayah_audio_cache[key]
-        offset = ayah_word_offset[key]
-        offset = min(offset, max(0, total_words - n_words_sub))  # garde-fou
-        sub_timings = full_timings[offset: offset + n_words_sub]
+        audio, ad, weights, total_weight = ayah_audio_cache[key]
+        idx  = ayah_subpart_idx[key]
+        w    = weights[idx]
+        is_last_subpart = (idx == len(weights) - 1)
 
         # ── Fenêtre temporelle de cette sous-partie dans l'audio complet ──────
-        if offset <= 0:
-            window_start = 0.0
-        else:
-            # FIX v7.5 : on utilise directement la fin du mot précédent
-            # (pas de moyenne floue qui introduit un décalage cumulatif)
-            window_start = full_timings[offset - 1]["end"]
-
-        end_idx = offset + n_words_sub
-        if end_idx >= total_words:
-            window_end = ad
-        else:
-            # FIX v7.5 : on utilise directement le début du mot suivant
-            window_end = full_timings[end_idx]["start"]
-
+        w_before     = ayah_weight_before[key]
+        window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
+        window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
         window_start = max(0.0, min(window_start, ad))
         window_end   = max(window_start + 0.05, min(window_end, ad))
         window_dur   = window_end - window_start
 
-        # ── Timings relocalisés à 0 dans cette fenêtre ────────────────────────
-        local_timings = [{"start": max(0.0, min(t["start"] - window_start, window_dur)),
-                          "end":   max(0.0, min(t["end"]   - window_start, window_dur))}
-                         for t in sub_timings]
-        for i in range(1, len(local_timings)):
-            if local_timings[i]["start"] < local_timings[i - 1]["end"]:
-                local_timings[i]["start"] = local_timings[i - 1]["end"]
-        if local_timings:
-            local_timings[-1]["end"] = window_dur
+        ayah_weight_before[key] = w_before + w
+        ayah_subpart_idx[key]   = idx + 1
 
-        ayah_word_offset[key] = end_idx
-
-        # 🔧 FIX dérive cumulative : le nombre de frames de CHAQUE écran est calculé
-        # par arrondi CUMULATIF (façon Bresenham) sur la durée réelle de l'audio
-        # complet de l'ayah, pas par troncature indépendante de chaque fenêtre.
-        # On utilise un compteur cumulatif PARTAGÉ entre les sous-parties d'une
-        # même ayah pour garantir qu'elles s'emboîtent exactement (zéro trou,
-        # zéro recouvrement), sans dépendre de recalculs flottants indépendants
-        # qui pourraient désynchroniser deux sous-parties voisines d'un seul frame.
+        # 🔧 Zéro dérive : le nombre de frames de CHAQUE écran est calculé par
+        # arrondi CUMULATIF (façon Bresenham) sur la durée réelle de l'audio
+        # complet de l'ayah, pas par troncature indépendante de chaque fenêtre —
+        # garantit que les écrans d'une même ayah s'emboîtent exactement
+        # (zéro trou, zéro recouvrement de frames).
         total_frames_full_ayah = int(round(ad * FPS))
         cum_before = ayah_frames_emitted.get(key, 0)
-        is_last_subpart = (end_idx >= total_words)
         if is_last_subpart:
             cum_after = total_frames_full_ayah  # garantit la somme exacte, pas d'arrondi résiduel
         else:
@@ -2300,13 +1841,9 @@ def select_verses(passage, reciter):
         n_audio_frames = max(1, cum_after - cum_before)
         ayah_frames_emitted[key] = cum_after
 
-        engine = SyncEngine(local_timings, n_audio_frames, window_dur, FPS)
-
         sel.append(verse)
         audios.append(audio)
         aud_durs.append(window_dur)
-        timings_list.append(local_timings)
-        engines.append(engine)
         frame_counts.append(n_audio_frames)
 
     # Audio mixé : dédoublonner les fichiers audio (même ayah = même fichier complet)
@@ -2325,7 +1862,7 @@ def select_verses(passage, reciter):
     total_dur = sum(unique_durs) + BREATH * max(0, len(unique_audios) - 1)
     audio_dur = sum(unique_durs)
     print(f"   Total : {len(sel)} écrans — {len(unique_audios)} ayat audio — {audio_dur:.1f}s audio — {total_dur:.1f}s vidéo")
-    return sel, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts
+    return sel, audios, aud_durs, total_dur, audio_dur, unique_audios, unique_durs, frame_counts
 
 def mix_audio(audio_list, dur_list, total_dur):
     """
@@ -2404,32 +1941,13 @@ def encode(frames_dir, audio_path, total_dur, out_path):
 def _select_passage_and_reciter(passage):
     """Essaie tous les récitateurs sur CE passage. Retourne soit le tuple complet
     de select_verses() + le récitateur retenu, soit None si aucun récitateur
-    ne fournit un audio complet ET un karaoké précis pour ce passage."""
-    import urllib.request as _ur, json as _json
-    def _has_timings(qid, surah):
-        try:
-            url = f"https://api.qurancdn.com/api/qdc/audio/reciters/{qid}/audio_files?chapter={surah}&segments=true"
-            req = _ur.Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-            with _ur.urlopen(req, timeout=8) as r:
-                data = _json.loads(r.read())
-            return any(len(af.get("segments", [])) > 0 for af in data.get("audio_files", []))
-        except:
-            return False
-
+    ne fournit un audio complet pour ce passage."""
     shuffled = RECITERS.copy()
     RNG.shuffle(shuffled)
-    reciter = shuffled[0]  # fallback
-    test_surah = passage["verses"][0]["surah"]
-    for candidate in shuffled:
-        if _has_timings(candidate["qid"], test_surah):
-            reciter = candidate
-            break
 
     print("Passage: " + passage["title"])
-    print("Recitateur: " + reciter["name"] + " " + reciter["flag"])
 
-    candidates_order = [reciter] + [c for c in shuffled if c is not reciter]
-    for cand in candidates_order:
+    for cand in shuffled:
         try:
             print("→ Tentative avec " + cand["name"] + " " + cand["flag"])
             result = select_verses(passage, cand)
@@ -2437,7 +1955,7 @@ def _select_passage_and_reciter(passage):
             if not verses:
                 continue
             return result + (cand,)
-        except (AudioMissingError, TimingsQualityError) as e:
+        except AudioMissingError as e:
             print(f"   ⚠ {e}")
             continue
         except Exception as e:
@@ -2447,7 +1965,7 @@ def _select_passage_and_reciter(passage):
             # sur CE passage et on passe au suivant, comme pour un audio manquant.
             print(f"   ⚠ Erreur inattendue avec {cand['name']} ({type(e).__name__}: {e}) — récitateur écarté pour ce passage")
             continue
-    print(f"   ❌ Aucun récitateur n'a pu fournir l'audio complet ET un karaoké précis pour « {passage['title']} »")
+    print(f"   ❌ Aucun récitateur n'a pu fournir l'audio complet pour « {passage['title']} »")
     return None
 
 # 🔧 FIX "1 vidéo garantie par jour" : si le passage tiré au hasard échoue avec
@@ -2474,8 +1992,7 @@ def generate(passage_idx=None):
         picked = _select_passage_and_reciter(passage)
         if picked is None:
             return None
-        verses, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, reciter = picked
-    else:
+        verses, audios, aud_durs, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, reciter = picked
         order = list(range(len(PASSAGES)))
         attempt = 0
         picked = None
@@ -2502,7 +2019,7 @@ def generate(passage_idx=None):
                 print(f"   🔁 Aucun des {len(PASSAGES)} passages n'a abouti à ce tour — "
                       f"nouvelle passe dans {RETRY_PAUSE_S:.0f}s (tentative cumulée: {attempt})...")
                 time.sleep(RETRY_PAUSE_S)
-        verses, audios, aud_durs, timings_list, engines, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, reciter = picked
+        verses, audios, aud_durs, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, reciter = picked
 
     n = len(verses)
     if n == 0:
@@ -2513,10 +2030,6 @@ def generate(passage_idx=None):
     fd = OUT_DIR / "frames"
     for f in fd.glob("*.jpg"):
         f.unlink()
-    # Vider le cache des timings pour recalculer avec le rebase t=0
-    for tf in (OUT_DIR / "cache").glob("timing_*.json"):
-        tf.unlink()
-    print("   🔄 Cache timings vidé — recalcul avec rebase t=0")
     xf           = p["xf"]
     gi           = 0
     # v7 : frames audio + frames breath (silence visuel) entre versets
@@ -2534,10 +2047,9 @@ def generate(passage_idx=None):
     for vi in range(n):
         verse   = verses[vi]
         aud_dur_v = aud_durs[vi]
-        engine  = engines[vi]
         sc_img, _ = scenes[vi]
         kb      = p["kb"][vi]
-        n_audio_frames = frame_counts[vi]  # 🔧 même valeur exacte que celle utilisée pour SyncEngine (zéro dérive)
+        n_audio_frames = frame_counts[vi]
         # Frames pendant la récitation (son actif)
         fade_in  = max(1, int(FPS * 0.55))
         fade_out = max(1, int(FPS * 0.45))
@@ -2562,10 +2074,7 @@ def generate(passage_idx=None):
                 ta = (n_audio_frames - fi) / max(1, fade_out)
             else:
                 ta = 1.0
-            sync_fi     = min(fi, n_audio_frames - 1)
-            hi_word     = engine.word_at(sync_fi)
-            hi_strength = engine.hi_strength(sync_fi)
-            frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), hi_word, hi_strength, vi+1, n)
+            frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), vi+1, n)
             frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
             gi += 1
         # ── Frames BREATH : crossfade IMAGE seulement, texte invisible ────────
@@ -2582,7 +2091,7 @@ def generate(passage_idx=None):
                 frame_b = ken_burns(next_sc, 0., **next_kb)
                 frame   = Image.blend(frame_a, frame_b, t_ease)
                 # Texte INVISIBLE pendant le crossfade (alpha=0) → plus de glitch
-                frame = render_frame(frame, verse, reciter, passage["title"], 0.0, 0, 0.0, vi+1, n)
+                frame = render_frame(frame, verse, reciter, passage["title"], 0.0, vi+1, n)
                 frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
                 gi += 1
         print(f"  Verset {vi+1} OK")
