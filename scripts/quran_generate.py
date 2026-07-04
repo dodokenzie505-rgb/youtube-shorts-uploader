@@ -1414,29 +1414,78 @@ _SHADOW_OFFSETS  = [(-2,-2),(2,-2),(-2,2),(2,2),(0,4),(1,3),(-1,3)]  # Ombre plu
 _EN_COLOR        = (240, 240, 255)         # Traduction : blanc légèrement bleuté
 _AR_COLOR        = (255, 250, 235)         # Arabe : blanc chaud, légèrement doré
 
-def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32):
+def _lerp_color(c1, c2, t):
+    t = max(0., min(1., t))
+    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
+
+def _word_karaoke_color(progress, start, end):
     """
-    Affiche le verset arabe complet, statique (pas de surlignage mot-à-mot) :
-    le verset entier est visible pendant toute sa récitation, puis cède la
-    place au suivant. Plus simple et 100% fiable — aucune dépendance à un
-    alignement mot-à-mot (CDN segments / Whisper) qui pouvait être imprécis.
+    Couleur + intensité de halo d'un mot en fonction de l'avancement de la
+    récitation (progress, 0→1 sur l'écran affiché) et de la fenêtre temporelle
+    estimée du mot [start, end] (poids proportionnel à sa longueur — on n'a
+    pas d'alignement mot-à-mot précis type Whisper, mais cette approximation
+    suffit à donner un vrai effet "karaoké" qui suit la récitation).
+    """
+    if progress < start:
+        return _FUTURE_COLOR, 0.0
+    if progress <= end:
+        return _HI_WORD_COLOR, 1.0
+    # Mot déjà récité : le halo s'éteint doucement et la couleur retombe
+    # vers la teinte "passé" sur une courte fenêtre — évite un flash abrupt.
+    decay = 0.07
+    fade  = min(1.0, (progress - end) / decay)
+    return _lerp_color(_HI_WORD_COLOR, _PAST_COLOR, fade), max(0.0, 1.0 - fade)
+
+def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, progress=None):
+    """
+    Affiche le verset arabe. Si `progress` est fourni (0→1, avancement de la
+    récitation sur cet écran), chaque mot est coloré selon qu'il est déjà
+    récité (atténué), en cours de récitation (doré, avec un halo lumineux)
+    ou pas encore récité (blanc neutre) — le texte "suit" ainsi la récitation
+    et défile dans le temps au lieu d'être statique. Le poids temporel de
+    chaque mot est approximé par sa longueur (pas d'alignement audio précis
+    disponible), ce qui reste fluide et robuste sans dépendance externe.
+    Si `progress` est None, le rendu reste statique (comportement précédent).
     """
     words = text.split()
     if not words:
         return 0
-    lines   = _wrap_words(words, font, max_w)
+    lines = _wrap_words(words, font, max_w)
+
+    starts = ends = None
+    if progress is not None:
+        weights = [max(1, len(w)) for w in words]
+        total_w = sum(weights) or 1
+        starts, acc = [], 0
+        for wgt in weights:
+            starts.append(acc / total_w)
+            acc += wgt
+        ends = starts[1:] + [1.0]
+
     fh      = _line_h(font) + 6
     y       = y_start
     total_h = 0
     for line in lines:
         line_w = sum(_word_w(font, w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
         x      = cx + line_w // 2
-        for k, (_, w, _) in enumerate(line):
-            ww = _word_w(font, w)
+        for k, (orig_idx, w, ww) in enumerate(line):
             x -= ww
+            if progress is not None:
+                color, glow = _word_karaoke_color(progress, starts[orig_idx], ends[orig_idx])
+            else:
+                color, glow = _AR_COLOR, 0.0
+            # Halo lumineux doux derrière le mot en cours de récitation
+            if glow > 0.01:
+                glow_a = int(alpha * glow * 0.5)
+                for gr in (7, 4, 2):
+                    ga = max(0, glow_a - gr * 12)
+                    if ga <= 0:
+                        continue
+                    for dx, dy in [(-gr, 0), (gr, 0), (0, -gr), (0, gr)]:
+                        draw.text((x + dx, y + dy), w, font=font, fill=(*_HI_GLOW_COLOR, ga))
             for dx, dy in _SHADOW_OFFSETS:
                 draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
-            draw.text((x, y), w, font=font, fill=(*_AR_COLOR, alpha))
+            draw.text((x, y), w, font=font, fill=(*color, alpha))
             x -= WORD_GAP
         y       += fh + line_gap
         total_h += fh + line_gap
@@ -1522,7 +1571,7 @@ def make_params(n):
         "kb":            kb,
     }
 
-def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_verses):
+def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_verses, progress=None):
     import re as _re, math as _math
     img = base_img.copy().convert("RGBA")
     ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -1593,10 +1642,10 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     # Texte principal
     d.text((tx, title_y), title, font=f["title"], fill=(255, 220, 100, int(a*0.95)))
 
-    # ── 4. Verset arabe — affiché en entier, statique ────────────────────────
+    # ── 4. Verset arabe — surlignage karaoké suivant la récitation ──────────
     ar_h = draw_arabic_text(
         d, verse["ar"], f["ar"],
-        cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=32
+        cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=32, progress=progress
     )
 
     # ── 5. Séparateur — ligne dorée ornementale avec fleurs ──────────────────
@@ -2058,16 +2107,34 @@ def generate(passage_idx=None):
         next_kb  = p["kb"][vi+1]   if vi < n-1 else None
         n_words  = len(verse["ar"].split())
         print("Verset " + str(vi+1) + "/" + str(n) + " — " + verse["ref"] + " — " + str(n_words) + " mots")
+        # ── Calculé ICI (avant la boucle) pour piloter à la fois le crossfade
+        # d'image de fin de sous-partie ci-dessous ET les frames BREATH plus bas.
+        next_is_new_ayah = (vi < n - 1 and
+            (verses[vi+1]["surah"] != verse["surah"] or
+             verses[vi+1]["ayah"]  != verse["ayah"]))
         # ── Frames audio du verset ──────────────────────────────────────────
         # TRANSITION PROPRE (fix bug glitch) :
         # - Pendant l'audio : image STABLE (ken-burns), texte visible
         # - Fade-out texte sur les dernières fade_out frames (image toujours stable)
         # - Pendant BREATH : image crossfade A→B, texte INVISIBLE (alpha=0)
         # - Au verset suivant : fade-in texte sur les premières fade_in frames
+        # 🎬 Amélioration transitions : quand l'écran suivant fait partie de la
+        # MÊME ayah (simple découpage en plusieurs écrans, sans silence BREATH
+        # prévu), on ne veut plus un cut brutal d'image en plein milieu de la
+        # récitation. On fond doucement vers l'image suivante pendant les
+        # dernières frames de fade-out du texte : à la fin de ce fondu, le
+        # texte est invisible ET l'image est déjà celle du prochain écran, donc
+        # l'écran suivant démarre "propre", sans second fondu à faire.
+        cross_start = n_audio_frames - fade_out
         for fi in range(n_audio_frames):
             t_seg = fi / max(1, n_audio_frames)
-            # Image stable pendant tout le verset (pas de crossfade pendant l'audio)
-            frame = ken_burns(sc_img, t_seg, **kb)
+            if (not next_is_new_ayah) and next_sc is not None and fi >= cross_start:
+                cross_t = _ease_inout((fi - cross_start) / max(1, fade_out))
+                frame_cur  = ken_burns(sc_img, t_seg, **kb)
+                frame_next = ken_burns(next_sc, 0., **next_kb)
+                frame = Image.blend(frame_cur, frame_next, cross_t)
+            else:
+                frame = ken_burns(sc_img, t_seg, **kb)
             # Alpha texte : fade-in en début, fade-out en fin
             if fi < fade_in:
                 ta = fi / fade_in
@@ -2075,14 +2142,12 @@ def generate(passage_idx=None):
                 ta = (n_audio_frames - fi) / max(1, fade_out)
             else:
                 ta = 1.0
-            frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), vi+1, n)
+            frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), vi+1, n, progress=t_seg)
             frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
             gi += 1
         # ── Frames BREATH : crossfade IMAGE seulement, texte invisible ────────
-        # Uniquement entre ayat DIFFÉRENTES (pas entre sous-parties du même verset)
-        next_is_new_ayah = (vi < n - 1 and
-            (verses[vi+1]["surah"] != verse["surah"] or
-             verses[vi+1]["ayah"]  != verse["ayah"]))
+        # Uniquement entre ayat DIFFÉRENTES (pas entre sous-parties du même verset,
+        # déjà lissées ci-dessus par le crossfade de fin de sous-partie)
         if vi < n - 1 and next_is_new_ayah:
             for bi in range(breath_frames):
                 t_b = bi / max(1, breath_frames - 1)
