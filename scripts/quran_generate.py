@@ -1993,6 +1993,7 @@ def generate(passage_idx=None):
         if picked is None:
             return None
         verses, audios, aud_durs, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, reciter = picked
+    else:
         order = list(range(len(PASSAGES)))
         attempt = 0
         picked = None
