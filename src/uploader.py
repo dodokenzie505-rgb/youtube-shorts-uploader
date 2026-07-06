@@ -28,7 +28,8 @@ CREDENTIALS_PATH = Path("config/client_secrets.json")
 def authenticate(credentials_path: str = None, token_path: str = None) -> object:
     """
     Authentifie l'utilisateur via OAuth2.
-    Compatible Google Colab (affiche un lien d'auth dans la cellule).
+    Compatible Google Colab (le flow 'oob' est mort, on utilise
+    la méthode 'copier l'URL de redirection' à la place).
 
     Args:
         credentials_path: Chemin vers client_secrets.json
@@ -37,6 +38,8 @@ def authenticate(credentials_path: str = None, token_path: str = None) -> object
     Returns:
         Service YouTube authentifié
     """
+    from urllib.parse import urlparse, parse_qs
+
     creds_path = Path(credentials_path or CREDENTIALS_PATH)
     tok_path = Path(token_path or TOKEN_PATH)
     tok_path.parent.mkdir(parents=True, exist_ok=True)
@@ -59,12 +62,31 @@ def authenticate(credentials_path: str = None, token_path: str = None) -> object
                     "👉 Télécharge-le depuis Google Cloud Console > APIs > Credentials"
                 )
             flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
-            flow.redirect_uri = "urn:ietf:wg:oauth:2.0:oob"
+            # 'localhost' est autorisé automatiquement pour un client OAuth
+            # de type "Desktop app", même si la page ne charge pas vraiment.
+            flow.redirect_uri = "http://localhost"
+
             auth_url, _ = flow.authorization_url(prompt="consent")
-            print("\n👉 Clique sur ce lien pour autoriser :\n")
+            print("\n👉 Clique sur ce lien, connecte-toi et autorise l'app :\n")
             print(auth_url)
-            print("\n📋 Copie le code et colle-le ci-dessous :")
-            code = input("Code : ")
+            print(
+                "\n📋 Ton navigateur va afficher une erreur "
+                "'Impossible d'accéder à ce site' — c'est normal.\n"
+                "   Copie l'URL COMPLÈTE dans la barre d'adresse "
+                "(elle contient '?code=...') et colle-la ci-dessous :"
+            )
+            redirected_url = input("URL collée : ").strip()
+
+            # Extraire le paramètre 'code' de l'URL collée
+            parsed = urlparse(redirected_url)
+            code = parse_qs(parsed.query).get("code")
+            if not code:
+                raise ValueError(
+                    "❌ Impossible de trouver 'code=' dans l'URL collée. "
+                    "Vérifie que tu as bien copié l'URL complète après autorisation."
+                )
+            code = code[0]
+
             flow.fetch_token(code=code)
             creds = flow.credentials
 
