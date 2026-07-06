@@ -1,3 +1,99 @@
+"""
+Script de génération de vidéos Quran Daily Reel.
+Extrait de quran_reel_v7-5_corrige.ipynb — appelé par daily_upload.py.
+"""
+import subprocess, sys, os
+from pathlib import Path
+
+# Installation des dépendances système si nécessaire
+def _ensure_installed():
+    import shutil
+    if not shutil.which("ffmpeg"):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "ffmpeg"], check=True)
+        except Exception:
+            pass
+    amiri_path = "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Regular.ttf"
+    if not os.path.exists(amiri_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-hosny-amiri"], check=True)
+        except Exception:
+            pass  # Non-bloquant, géré par le fallback ImageFont plus bas
+            
+    # 🖋 Police coranique plus soignée (Scheherazade New — style Uthmani, très
+    # lisible, largement utilisée par les apps de lecture du Coran). Best-effort :
+    # si le paquet n'existe pas sur ce système, on continue avec Amiri (déjà bien).
+    scheherazade_path = "/usr/share/fonts/truetype/sil-scheherazade/ScheherazadeNew-Regular.ttf"
+    if not os.path.exists(scheherazade_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-sil-scheherazade"],
+                            check=True, timeout=120)
+        except Exception:
+            pass  # Non-bloquant : Amiri ou default reste le repli
+    try:
+        import PIL
+    except ImportError:
+        subprocess.run([sys.executable, "-m", "pip", "install", "Pillow", "-q"], check=True)
+
+_ensure_installed()
+
+
+print("\n🚀 Démarrage de la génération...\n")
+
+import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
+import urllib.request
+
+# ==============================================================================
+# SECURE FONT LOADING FUNCTION (Remplace les appels directs ImageFont.truetype)
+# ==============================================================================
+def safe_load_font(font_path, size):
+    """ Tente de charger une police TTF. En cas d'erreur OSError (fichier absent),
+    se rabat sur la police par défaut du système pour éviter le crash. """
+    try:
+        if font_path and os.path.exists(font_path):
+            return ImageFont.truetype(font_path, size=size)
+        elif font_path: # Si le chemin est fourni mais n'existe pas sur le disque
+            # Optionnel : chercher aussi dans le dossier local courant du script
+            local_name = os.path.basename(font_path)
+            if os.path.exists(local_name):
+                return ImageFont.truetype(local_name, size=size)
+        raise OSError("Police introuvable.")
+    except OSError:
+        print(f" ⚠ Impossible de charger la police '{font_path}', repli sur ImageFont.load_default().")
+        return ImageFont.load_default()
+
+# Définition des chemins globaux pour les polices
+AMIRI_FONT_PATH = "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Regular.ttf"
+SCHEHERAZADE_FONT_PATH = "/usr/share/fonts/truetype/sil-scheherazade/ScheherazadeNew-Regular.ttf"
+
+# Note pour plus bas dans votre fonction render_frame() ou d'initialisation :
+# Remplacez simplement vos variables de polices par :
+# f["arabic"] = safe_load_font(SCHEHERAZADE_FONT_PATH, size=65)
+# f["english"] = safe_load_font(None, size=40) # utilisera load_default() si aucun chemin valide
+
+W, H      = 1080, 1920
+FPS       = 24
+MAX_DUR   = None   # Pas de limite : la récitation n'est jamais coupée
+BREATH    = 0.40   # Silence naturel entre versets
+
+BREATH_FRAMES = int(round(BREATH * FPS))
+BREATH_DUR    = BREATH_FRAMES / FPS
+ACCOUNT   = os.getenv("IG_HANDLE", "@quranreminders14")
+OUT_DIR   = Path("quran_out")
+for d in [OUT_DIR, OUT_DIR / "frames", OUT_DIR / "cache"]:
+    d.mkdir(exist_ok=True)
+
+def make_seed():
+    raw = f"{time.time_ns()}_{os.urandom(16).hex()}_{os.getpid()}"
+    return int(hashlib.sha256(raw.encode()).hexdigest(), 16) % (2 ** 31)
+
+RUN_SEED = make_seed()
+RNG      = random.Random(RUN_SEED)
+
+class AudioMissingError(Exception):
+    pass
 # -*- coding: utf-8 -*-
 """
 Script de génération de vidéos Quran Daily Reel — Version Intégrale et Autonome.
