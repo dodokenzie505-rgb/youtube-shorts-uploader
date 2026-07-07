@@ -27,6 +27,15 @@ def _ensure_installed():
         import PIL
     except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "Pillow", "-q"], check=True)
+    # 🖋 libraqm : shaping arabe de qualité (jonctions de lettres, diacritiques).
+    # Généralement déjà inclus dans les wheels Pillow ; on l'installe quand
+    # même en best-effort au niveau système pour les cas où ce ne serait pas
+    # le cas (non-bloquant si le paquet n'existe pas sur cette distro).
+    try:
+        subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "libraqm0"],
+                        check=True, timeout=60, capture_output=True)
+    except Exception:
+        pass
 
 _ensure_installed()
 
@@ -1227,8 +1236,17 @@ def _build_passages_from_api(curated, target_total):
                 ar_text  = v.get("text_uthmani", "").strip()
                 trs      = v.get("translations", [])
                 en_text  = _strip_html(trs[0]["text"]) if trs else ""
-                if not ar_text or not en_text:
+                # 🔧 FIX "versets sautés" : on ne saute JAMAIS une ayah simplement
+                # parce que sa traduction est absente/mal formée — avant, ce cas
+                # faisait disparaître l'ayah du bloc sans laisser de trace, ce qui
+                # créait un "trou" audible (l'audio de cette ayah n'était plus
+                # jamais demandé) et une coupure nette dans la récitation du
+                # passage. On ne saute désormais que si le texte ARABE lui-même
+                # est manquant (cas quasi jamais rencontré en pratique).
+                if not ar_text:
                     continue
+                if not en_text:
+                    en_text = "…"
                 verses_out.append({
                     "ar": ar_text, "en": en_text,
                     "ref": f"{cid}:{ayah_num}", "surah": cid, "ayah": ayah_num,
@@ -1356,7 +1374,16 @@ PHOTOS = [
 def _load_font(paths, size):
     for p in paths:
         try:
-            return ImageFont.truetype(p, size)
+            # 🖋 Layout RAQM (harfbuzz+fribidi, inclus dans les wheels Pillow
+            # récentes) : indispensable pour un rendu arabe VRAIMENT propre —
+            # jonction correcte des lettres, positionnement des diacritiques
+            # (tashkeel), formes contextuelles. Sans ça, PIL peut afficher les
+            # lettres isolées/mal jointes. Repli silencieux sur le layout basique
+            # si raqm n'est pas disponible sur la machine.
+            try:
+                return ImageFont.truetype(p, size, layout_engine=ImageFont.Layout.RAQM)
+            except Exception:
+                return ImageFont.truetype(p, size)
         except:
             pass
     return ImageFont.load_default()
@@ -1418,67 +1445,26 @@ def _ease_inout(t):
     t = max(0.0, min(1.0, t))
     return t * t * (3.0 - 2.0 * t)
 
-_HI_GLOW_COLOR   = (255, 215, 80)          # (conservé pour cohérence de palette ailleurs)
-_HI_WORD_COLOR   = (255, 245, 180)
-_PAST_COLOR      = (160, 160, 180)
-_FUTURE_COLOR    = (220, 220, 235)
 _SHADOW_OFFSETS  = [(-2,-2),(2,-2),(-2,2),(2,2),(0,4),(1,3),(-1,3)]  # Ombre plus riche
 _EN_COLOR        = (240, 240, 255)         # Traduction : blanc légèrement bleuté
 _AR_COLOR        = (255, 250, 235)         # Arabe : blanc chaud, légèrement doré
+_AR_GLOW_COLOR   = (255, 225, 150)         # Lueur douce et constante autour du verset
 
-def _lerp_color(c1, c2, t):
-    t = max(0., min(1., t))
-    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
-
-def _word_karaoke_color(progress, start, end):
+def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, **_unused):
     """
-    Couleur + intensité de halo d'un mot en fonction de l'avancement de la
-    récitation (progress, 0→1 sur l'écran affiché) et de la fenêtre temporelle
-    estimée du mot [start, end] (poids proportionnel à sa longueur — on n'a
-    pas d'alignement mot-à-mot précis type Whisper, mais cette approximation
-    suffit à donner un vrai effet "karaoké" qui suit la récitation).
-    """
-    if progress < start:
-        return _FUTURE_COLOR, 0.0
-    if progress <= end:
-        return _HI_WORD_COLOR, 1.0
-    # Mot déjà récité : le halo s'éteint doucement et la couleur retombe
-    # vers la teinte "passé" sur une courte fenêtre — évite un flash abrupt.
-    decay = 0.07
-    fade  = min(1.0, (progress - end) / decay)
-    return _lerp_color(_HI_WORD_COLOR, _PAST_COLOR, fade), max(0.0, 1.0 - fade)
-
-def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, progress=None, word_windows=None):
-    """
-    Affiche le verset arabe. Si `progress` est fourni (0→1, avancement de la
-    récitation sur cet écran), chaque mot est coloré selon qu'il est déjà
-    récité (atténué), en cours de récitation (doré, avec un halo lumineux)
-    ou pas encore récité (blanc neutre) — le texte "suit" ainsi la récitation
-    et défile dans le temps au lieu d'être statique.
-    Le timing de chaque mot vient de `word_windows` (liste de tuples
-    (start_frac, end_frac) par mot, issue de l'alignement audio RÉEL — quasi
-    parfait) quand disponible ; sinon on retombe sur une estimation par
-    longueur de mot (moins précise mais toujours fluide, sans dépendance
-    externe). Si `progress` est None, le rendu reste statique.
+    Affiche le verset arabe en entier, de façon propre et statique — une seule
+    couleur chaude et lisible pour tout le verset, avec une ombre portée pour
+    le détacher du fond et une très légère lueur dorée pour le côté soigné.
+    Pas de surlignage mot-à-mot : c'est l'apparition/disparition en fondu de
+    l'écran entier (gérée par l'appelant, calée sur l'audio de CE verset) qui
+    fait "coller" le texte à la récitation, sans effet karaoké.
+    `**_unused` absorbe d'éventuels anciens appels avec progress=/word_windows=
+    pour rester rétro-compatible sans rien casser.
     """
     words = text.split()
     if not words:
         return 0
     lines = _wrap_words(words, font, max_w)
-
-    starts = ends = None
-    if progress is not None:
-        if word_windows is not None and len(word_windows) == len(words):
-            starts = [w[0] for w in word_windows]
-            ends   = [w[1] for w in word_windows]
-        else:
-            weights = [max(1, len(w)) for w in words]
-            total_w = sum(weights) or 1
-            starts, acc = [], 0
-            for wgt in weights:
-                starts.append(acc / total_w)
-                acc += wgt
-            ends = starts[1:] + [1.0]
 
     fh      = _line_h(font) + 6
     y       = y_start
@@ -1486,24 +1472,17 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, p
     for line in lines:
         line_w = sum(_word_w(font, w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
         x      = cx + line_w // 2
-        for k, (orig_idx, w, ww) in enumerate(line):
+        for _, w, ww in line:
             x -= ww
-            if progress is not None:
-                color, glow = _word_karaoke_color(progress, starts[orig_idx], ends[orig_idx])
-            else:
-                color, glow = _AR_COLOR, 0.0
-            # Halo lumineux doux derrière le mot en cours de récitation
-            if glow > 0.01:
-                glow_a = int(alpha * glow * 0.5)
-                for gr in (7, 4, 2):
-                    ga = max(0, glow_a - gr * 12)
-                    if ga <= 0:
-                        continue
+            # Lueur douce et discrète (constante, pas animée) derrière le mot
+            glow_a = int(alpha * 0.16)
+            if glow_a > 0:
+                for gr in (3, 2):
                     for dx, dy in [(-gr, 0), (gr, 0), (0, -gr), (0, gr)]:
-                        draw.text((x + dx, y + dy), w, font=font, fill=(*_HI_GLOW_COLOR, ga))
+                        draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_GLOW_COLOR, glow_a))
             for dx, dy in _SHADOW_OFFSETS:
                 draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
-            draw.text((x, y), w, font=font, fill=(*color, alpha))
+            draw.text((x, y), w, font=font, fill=(*_AR_COLOR, alpha))
             x -= WORD_GAP
         y       += fh + line_gap
         total_h += fh + line_gap
@@ -1825,82 +1804,16 @@ def get_audio_dur(path):
 # tout échec (dépendance absente, pas de réseau, mésalignement...) retombe
 # silencieusement sur l'heuristique de longueur de mot (_screen_char_weights)
 # déjà en place — la génération de la vidéo n'est jamais bloquée par ceci.
-_ALIGNER = {"model": None, "tokenizer": None, "available": None}
-
-def _load_aligner():
-    if _ALIGNER["available"] is False:
-        return None
-    if _ALIGNER["model"] is not None:
-        return _ALIGNER["model"], _ALIGNER["tokenizer"]
-    try:
-        import torch
-        try:
-            from ctc_forced_aligner import load_alignment_model
-        except ImportError:
-            print("   📦 Installation de ctc-forced-aligner (alignement mot-à-mot précis)...")
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-q", "--break-system-packages",
-                 "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"],
-                check=True, timeout=900
-            )
-            from ctc_forced_aligner import load_alignment_model
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        dtype  = torch.float16 if device == "cuda" else torch.float32
-        model, tokenizer = load_alignment_model(device, dtype=dtype)
-        _ALIGNER.update(model=model, tokenizer=tokenizer, available=True)
-        print(f"   ✅ Modèle d'alignement mot-à-mot chargé ({device})")
-        return model, tokenizer
-    except Exception as e:
-        print(f"   ⚠ Alignement mot-à-mot indisponible ({type(e).__name__}: {e}) — "
-              f"repli sur l'heuristique de longueur de mot pour toute la génération.")
-        _ALIGNER["available"] = False
-        return None
-
-def _align_words(audio_path, full_text, cache_key):
-    """
-    Retourne [(start_s, end_s), ...] — un tuple par mot de `full_text.split()` —
-    donnant le timestamp RÉEL (en secondes, dans le fichier audio complet de
-    l'ayah) de chaque mot. None si l'alignement est indisponible ou a échoué
-    (dans ce cas, l'appelant doit retomber sur l'heuristique de longueur).
-    Résultat mis en cache sur disque pour ne jamais raligner deux fois la même
-    ayah/récitateur, même entre deux runs différents du script.
-    """
-    cache_path = OUT_DIR / "cache" / f"align_{cache_key}.json"
-    n_expected = len(full_text.split())
-    if cache_path.exists():
-        try:
-            data = json.loads(cache_path.read_text())
-            if len(data) == n_expected:
-                return [(d[0], d[1]) for d in data]
-        except Exception:
-            pass
-    loaded = _load_aligner()
-    if loaded is None:
-        return None
-    model, tokenizer = loaded
-    try:
-        from ctc_forced_aligner import (
-            load_audio, generate_emissions, preprocess_text,
-            get_alignments, get_spans, postprocess_results,
-        )
-        waveform = load_audio(str(audio_path), model.dtype, model.device)
-        emissions, stride = generate_emissions(model, waveform, batch_size=8)
-        tokens_starred, text_starred = preprocess_text(full_text, romanize=True, language="ara")
-        segments, scores, blank_token = get_alignments(emissions, tokens_starred, tokenizer)
-        spans  = get_spans(tokens_starred, segments, blank_token)
-        words  = postprocess_results(text_starred, spans, stride, scores)
-        if len(words) != n_expected:
-            raise ValueError(f"{len(words)} mots alignés vs {n_expected} attendus dans le texte")
-        out = [(float(w["start"]), float(w["end"])) for w in words]
-        try:
-            cache_path.write_text(json.dumps(out))
-        except Exception:
-            pass
-        return out
-    except Exception as e:
-        print(f"   ⚠ Alignement échoué pour cette ayah ({type(e).__name__}: {e}) — repli sur l'heuristique.")
-        return None
-
+# 🔧 SIMPLIFICATION : l'ancien alignement mot-à-mot (modèle ctc-forced-aligner,
+# téléchargé/installé à la volée via pip + torch au premier lancement) servait
+# uniquement à faire "courir" un surlignage doré mot par mot façon karaoké.
+# Cet effet n'est plus voulu : chaque écran affiche désormais son verset
+# complet, de façon propre et statique, pendant toute sa fenêtre audio — ce qui
+# est largement suffisant pour "coller" à la récitation puisque le texte
+# apparaît/disparaît exactement au bon moment (cf. fade in/out synchronisés sur
+# l'audio dans generate()). Supprimer ce sous-système élimine au passage une
+# dépendance lourde et fragile (téléchargement réseau d'un modèle + poids
+# GitHub à la première exécution), qui pouvait échouer ou ralentir un run.
 def _screen_char_weights(sub_parts):
     """
     Pour une ayah affichée sur plusieurs écrans (ex. Ayat Al-Kursi a→h), répartit
@@ -1915,16 +1828,14 @@ def _screen_char_weights(sub_parts):
     return [char_count(v["ar"]) for v in sub_parts]
 
 def select_verses(passage, reciter):
-    """v9 : TOUS les versets du passage. Chaque écran affiche son texte avec un
-    surlignage karaoké qui suit la récitation mot par mot. Le timing de ce
-    surlignage vient, par ordre de préférence :
-      1) de l'alignement forcé RÉEL (audio ↔ texte connu, cf. _align_words) —
-         quasi-parfait, mais nécessite le modèle d'alignement (best-effort) ;
-      2) sinon, de l'heuristique de longueur de mot (repli 100% fiable, aucune
-         dépendance réseau/modèle supplémentaire).
+    """v10 : TOUS les versets du passage. Chaque écran affiche son texte au
+    complet, de façon statique et propre (plus de surlignage mot-à-mot) — le
+    texte apparaît en fondu dès que la récitation atteint son écran et
+    disparaît en fondu juste avant l'écran suivant, ce qui suffit à bien
+    "coller" à la récitation sans les fragilités d'un alignement mot-à-mot.
     Les sous-parties d'un même verset (même surah+ayah) partagent UN seul audio ;
-    la durée totale de l'ayah est répartie entre ses écrans au prorata soit des
-    timestamps réels (si disponibles), soit de la longueur du texte.
+    la durée totale de l'ayah est répartie entre ses écrans au prorata de la
+    longueur du texte de chacun (cf. _screen_char_weights).
     """
     sel, audios, aud_durs, frame_counts, word_windows = [], [], [], [], []
 
@@ -1939,8 +1850,6 @@ def select_verses(passage, reciter):
     ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés par les sous-parties précédentes
     ayah_subpart_idx    = {}  # (s,a,qid) → index de la prochaine sous-partie dans ayah_groups[key]
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
-    ayah_word_ts        = {}  # (s,a,qid) → [(start_s,end_s), ...] sur TOUTE l'ayah, ou None si indisponible
-    ayah_word_before    = {}  # (s,a,qid) → nb de mots déjà consommés par les sous-parties précédentes
 
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
@@ -1963,16 +1872,8 @@ def select_verses(passage, reciter):
             ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
             ayah_weight_before[key] = 0
             ayah_subpart_idx[key]   = 0
-            ayah_word_before[key]   = 0
-            # ── Alignement mot-à-mot réel sur l'audio COMPLET de l'ayah ───────
-            # (best-effort : None si le modèle est indisponible ou l'alignement
-            # échoue — les écrans de cette ayah retomberont alors sur l'heuristique)
-            full_text = " ".join(v["ar"] for v in ayah_groups[key])
-            align_key = f"{verse['surah']}_{verse['ayah']}_{reciter['qid']}"
-            ayah_word_ts[key] = _align_words(audio, full_text, align_key)
             n_screens = len(weights)
-            src = "alignement réel" if ayah_word_ts[key] is not None else "heuristique longueur"
-            print(f"      {verse['surah']}:{verse['ayah']} ({round(ad,1)}s) [audio téléchargé — {n_screens} écran(s) — {src}]")
+            print(f"      {verse['surah']}:{verse['ayah']} ({round(ad,1)}s) [audio téléchargé — {n_screens} écran(s)]")
         else:
             print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
 
@@ -1991,31 +1892,6 @@ def select_verses(passage, reciter):
 
         ayah_weight_before[key] = w_before + w
         ayah_subpart_idx[key]   = idx + 1
-
-        # ── Fenêtres de mots (karaoké) pour CET écran ─────────────────────────
-        # Si un alignement réel existe pour l'ayah entière, on en extrait la
-        # tranche de mots correspondant à cet écran et on la ramène en fractions
-        # LOCALES [0,1] de la fenêtre audio de cet écran (ce que draw_arabic_text
-        # attend). Sinon : None → repli sur l'heuristique de longueur dans
-        # draw_arabic_text (comportement identique à avant).
-        n_words_screen = len(verse["ar"].split())
-        w0 = ayah_word_before[key]
-        w1 = w0 + n_words_screen
-        ayah_word_before[key] = w1
-        screen_word_windows = None
-        full_ts = ayah_word_ts.get(key)
-        if full_ts is not None and w1 <= len(full_ts):
-            sub_ts = full_ts[w0:w1]
-            screen_word_windows = []
-            for (ws, we) in sub_ts:
-                ws_c = max(window_start, min(ws, window_end))
-                we_c = max(window_start, min(we, window_end))
-                if we_c <= ws_c:
-                    we_c = min(window_end, ws_c + 0.01)
-                screen_word_windows.append((
-                    (ws_c - window_start) / max(0.001, window_dur),
-                    (we_c - window_start) / max(0.001, window_dur),
-                ))
 
         # 🔧 Zéro dérive : le nombre de frames de CHAQUE écran est calculé par
         # arrondi CUMULATIF (façon Bresenham) sur la durée réelle de l'audio
@@ -2036,7 +1912,7 @@ def select_verses(passage, reciter):
         audios.append(audio)
         aud_durs.append(window_dur)
         frame_counts.append(n_audio_frames)
-        word_windows.append(screen_word_windows)
+        word_windows.append(None)  # 🔧 conservé pour compat de signature ; plus de karaoké mot-à-mot
 
     # Audio mixé : dédoublonner les fichiers audio (même ayah = même fichier complet)
     seen_audio = []
