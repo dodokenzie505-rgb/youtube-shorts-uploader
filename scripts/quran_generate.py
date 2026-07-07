@@ -1472,7 +1472,7 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, p
             starts = [w[0] for w in word_windows]
             ends   = [w[1] for w in word_windows]
         else:
-            weights = [max(1, len(w)) for w in words]
+            weights = [_arabic_duration_weight(w) for w in words]
             total_w = sum(weights) or 1
             starts, acc = [], 0
             for wgt in weights:
@@ -1901,18 +1901,45 @@ def _align_words(audio_path, full_text, cache_key):
         print(f"   ⚠ Alignement échoué pour cette ayah ({type(e).__name__}: {e}) — repli sur l'heuristique.")
         return None
 
+def _arabic_duration_weight(text):
+    """
+    🔧 Amélioration karaoké : un simple compte de lettres traite "قُلْ" (court,
+    3 lettres) et "خَالِدُونَ" (long à l'oral à cause du ا de prolongation)
+    comme proportionnels à leur longueur écrite, alors qu'à l'oral l'écart
+    réel est plus marqué. On pondère donc :
+      - +0.5 par lettre de prolongation naturelle (ا/و/ي/ى, madd ~2 harakat)
+      - +0.6 par chadda (ّ) : la consonne est doublée, donc plus longue
+      - +1.5 par maddah (ٓ, ex. آ) : élongation forte, ~4-6 harakat
+    Résultat : une estimation de durée par mot/écran nettement plus fidèle
+    au rythme réel de la récitation que le compte de lettres brut — utilisée
+    à la fois pour répartir un verset sur plusieurs écrans (Ayat Al-Kursi...)
+    et pour le surlignage mot-à-mot de repli quand l'alignement réel
+    (_align_words) est indisponible.
+    """
+    w = 0.0
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if cat.startswith("L"):
+            w += 1.0
+            if ch in "اوىي":
+                w += 0.5
+        elif ch == "\u0651":      # chadda
+            w += 0.6
+        elif ch == "\u0653":      # maddah (ex. آ)
+            w += 1.5
+    return max(1.0, w)
+
 def _screen_char_weights(sub_parts):
     """
     Pour une ayah affichée sur plusieurs écrans (ex. Ayat Al-Kursi a→h), répartit
-    la durée audio totale entre les écrans proportionnellement à la longueur du
-    texte de chacun — un écran avec deux fois plus de mots reste affiché deux
-    fois plus longtemps. Beaucoup plus simple et 100% robuste qu'un alignement
-    mot-à-mot (segments CDN / Whisper) : aucun appel réseau supplémentaire,
-    aucun risque d'alignement raté, un résultat toujours cohérent.
+    la durée audio totale entre les écrans proportionnellement au poids de
+    durée estimé de chacun (cf. _arabic_duration_weight, qui tient compte des
+    élongations/chadda plutôt qu'un simple compte de lettres). Beaucoup plus
+    simple et 100% robuste qu'un alignement mot-à-mot (segments CDN / Whisper) :
+    aucun appel réseau supplémentaire, aucun risque d'alignement raté, un
+    résultat toujours cohérent.
     """
-    def char_count(text):
-        return max(1, sum(1 for c in text if unicodedata.category(c).startswith("L")))
-    return [char_count(v["ar"]) for v in sub_parts]
+    return [_arabic_duration_weight(v["ar"]) for v in sub_parts]
 
 def _detect_pause_times(audio_path, ad, noise_db=-30, min_silence=0.10):
     """
@@ -2250,10 +2277,10 @@ MAX_VIDEO_TARGET_S = float(os.getenv("MAX_VIDEO_TARGET_S", "35"))
 # silence en début) est dérivée du nombre de frames vidéo réellement rendues,
 # jamais l'inverse — ça garantit zéro dérive audio/vidéo sur ces écrans,
 # exactement la même classe de bug que le fix karaoké breath plus haut.
-HOOK_DUR_S     = 1.4
+HOOK_DUR_S     = 2.0
 HOOK_FRAMES    = int(round(HOOK_DUR_S * FPS))
 HOOK_DUR       = HOOK_FRAMES / FPS
-OUTRO_DUR_S    = 1.2
+OUTRO_DUR_S    = 2.6
 OUTRO_FRAMES   = int(round(OUTRO_DUR_S * FPS))
 OUTRO_DUR      = OUTRO_FRAMES / FPS
 
@@ -2375,16 +2402,18 @@ def _trim_to_target_duration(verses, audios, aud_durs, frame_counts, word_window
     print(f"   ✂️  Tronqué à {keep_ayat}/{len(unique_durs)} ayat pour rester sous ~{target_s:.0f}s")
     return new_v, new_a, new_ad, new_fc, new_ww, unique_audios[:keep_ayat], unique_durs[:keep_ayat]
 
-def render_hook(base_img, hook_text, alpha_frac):
-    """Écran d'ouverture (~1.4s) : accroche courte affichée AVANT le premier
-    verset, pour arrêter le scroll dans la première seconde. Même image que
-    le premier verset (déjà téléchargée) pour une transition douce."""
-    img = base_img.copy().convert("RGBA")
+def render_hook(hook_text, alpha_frac):
+    """Écran d'ouverture (~2s) : accroche courte affichée AVANT le premier
+    verset, pour arrêter le scroll dans la première seconde. Fond NOIR plein
+    (pas la photo du verset) : rupture de contraste forte contre le feed —
+    un carré noir avec du texte blanc "casse" visuellement le défilement de
+    miniatures colorées bien mieux qu'une photo, et signale clairement
+    "contenu différent" avant que la récitation ne commence."""
+    img = Image.new("RGB", (W, H), (0, 0, 0)).convert("RGBA")
     ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(ov, "RGBA")
     f = fonts()
     a = int(255 * max(0., min(1., alpha_frac)))
-    d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.40)))
     words  = hook_text.split()
     lines  = _wrap_words(words, f["title"], int(W * 0.82))
     fh     = _line_h(f["title"]) + 10
@@ -2393,20 +2422,21 @@ def render_hook(base_img, hook_text, alpha_frac):
         text = " ".join(w for _, w, _ in line)
         lw   = f["title"].getbbox(text)[2] - f["title"].getbbox(text)[0]
         x    = W // 2 - lw // 2
-        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.65)))
+        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.5)))
         d.text((x, y), text, font=f["title"], fill=(255, 250, 240, a))
         y += fh
     return Image.alpha_composite(img, ov).convert("RGB")
 
-def render_outro(base_img, cta_text, account, alpha_frac):
-    """Écran final court : question d'engagement (commentaires/partages) +
-    rappel du compte, sur l'image du dernier verset."""
-    img = base_img.copy().convert("RGBA")
+def render_outro(cta_text, account, alpha_frac):
+    """Écran final (~2.6s) : question d'engagement (commentaires/partages) +
+    rappel du compte, sur fond NOIR plein — même logique que le hook : un
+    signal visuel fort et net de "fin de la récitation", qui laisse le temps
+    de lire et d'agir (commenter/suivre) sans la distraction du fond photo."""
+    img = Image.new("RGB", (W, H), (0, 0, 0)).convert("RGBA")
     ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(ov, "RGBA")
     f = fonts()
     a = int(255 * max(0., min(1., alpha_frac)))
-    d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.35)))
     words = cta_text.split()
     lines = _wrap_words(words, f["title"], int(W * 0.82))
     fh    = _line_h(f["title"]) + 10
@@ -2415,13 +2445,13 @@ def render_outro(base_img, cta_text, account, alpha_frac):
         text = " ".join(w for _, w, _ in line)
         lw   = f["title"].getbbox(text)[2] - f["title"].getbbox(text)[0]
         x    = W // 2 - lw // 2
-        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.6)))
+        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.5)))
         d.text((x, y), text, font=f["title"], fill=(255, 215, 80, a))
         y += fh
     w_ = f["small"].getbbox(account)[2] - f["small"].getbbox(account)[0]
     x_ = W // 2 - w_ // 2
     ay = y + 20
-    d.text((x_ + 2, ay + 3), account, font=f["small"], fill=(0, 0, 0, int(a * 0.6)))
+    d.text((x_ + 2, ay + 3), account, font=f["small"], fill=(0, 0, 0, int(a * 0.5)))
     d.text((x_, ay), account, font=f["small"], fill=(255, 255, 255, int(a * 0.85)))
     return Image.alpha_composite(img, ov).convert("RGB")
 
@@ -2523,20 +2553,18 @@ def generate(passage_idx=None):
     total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
 
-    # ── Écran hook (accroche ~1.4s) AVANT le premier verset — scroll-stopper.
-    # Sur l'image du 1er verset, texte accrocheur choisi selon le thème du
-    # passage. gi part de 0 ici ; la boucle des versets continue ensuite le
-    # compteur, donc l'audio doit être précédé d'un silence de durée HOOK_DUR
+    # ── Écran hook (accroche ~2s) AVANT le premier verset — scroll-stopper.
+    # Fond NOIR plein (cf. render_hook) : rupture de contraste contre le feed.
+    # gi part de 0 ici ; la boucle des versets continue ensuite le compteur,
+    # donc l'audio doit être précédé d'un silence de durée HOOK_DUR
     # (verrouillée sur HOOK_FRAMES) pour rester calé — voir _prepend_audio_silence.
     hook_text = pick_hook(passage["title"])
-    hook_sc   = scenes[0][0]
-    hook_fade = max(1, int(HOOK_FRAMES * 0.35))
+    hook_fade = max(1, int(HOOK_FRAMES * 0.2))
     for hi in range(HOOK_FRAMES):
-        frame = ken_burns(hook_sc, 0.0)
         ha_in  = hi / hook_fade
         ha_out = (HOOK_FRAMES - 1 - hi) / hook_fade
         ha     = max(0.0, min(1.0, ha_in, ha_out))
-        frame = render_hook(frame, hook_text, ha)
+        frame = render_hook(hook_text, ha)
         frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
         gi += 1
 
@@ -2609,18 +2637,17 @@ def generate(passage_idx=None):
                 gi += 1
         print(f"  Verset {vi+1} OK")
 
-    # ── Écran outro : quelques frames sur la dernière image, avec une question
+    # ── Écran outro : fond NOIR plein (cf. render_outro), avec une question
     # d'engagement liée au thème (déclencheur de commentaire/partage) + le
     # compte. Ces frames n'ont pas de son propre — c'est le silence de padding
     # audio ajouté plus bas qui les couvre.
     cta_text     = pick_cta(passage["title"])
-    last_sc, _   = scenes[n - 1]
-    last_kb      = p["kb"][n - 1]
-    outro_fade   = max(1, int(OUTRO_FRAMES * 0.4))
+    outro_fade   = max(1, int(OUTRO_FRAMES * 0.2))
     for oi in range(OUTRO_FRAMES):
-        frame = ken_burns(last_sc, 1.0, **last_kb)
-        oa    = min(1.0, oi / outro_fade)
-        frame = render_outro(frame, cta_text, ACCOUNT, oa)
+        oa_in  = oi / outro_fade
+        oa_out = (OUTRO_FRAMES - 1 - oi) / outro_fade
+        oa     = max(0.0, min(1.0, oa_in, oa_out))
+        frame = render_outro(cta_text, ACCOUNT, oa)
         frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
         gi += 1
 
