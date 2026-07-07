@@ -1914,6 +1914,46 @@ def _screen_char_weights(sub_parts):
         return max(1, sum(1 for c in text if unicodedata.category(c).startswith("L")))
     return [char_count(v["ar"]) for v in sub_parts]
 
+def _detect_pause_times(audio_path, ad, noise_db=-30, min_silence=0.10):
+    """
+    🔧 FIX décalage karaoké (écrans multiples par ayah, ex. Ayat Al-Kursi a→h) :
+    détecte les VRAIES pauses de récitation (respiration entre clauses) dans
+    l'audio via ffmpeg silencedetect — aucune dépendance ML/réseau, fonctionne
+    même sur un runner CI sans GPU. Ces pauses servent ensuite à "aimanter"
+    les frontières entre écrans d'une même ayah sur de vrais points de
+    silence plutôt que sur une simple proportion de longueur de texte, qui
+    ignore les élongations (madd) et pauses (waqf) réelles de la récitation.
+    Retourne une liste de timestamps (s), un par silence détecté (milieu du
+    silence). Best-effort : liste vide si la détection échoue ou si l'audio
+    est trop court/propre pour révéler des pauses nettes.
+    """
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-i", str(audio_path), "-af",
+             f"silencedetect=noise={noise_db}dB:d={min_silence}",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=30
+        )
+        starts, ends = [], []
+        for line in r.stderr.splitlines():
+            if "silence_start:" in line:
+                try:
+                    starts.append(float(line.split("silence_start:")[1].strip().split()[0]))
+                except Exception:
+                    pass
+            elif "silence_end:" in line:
+                try:
+                    ends.append(float(line.split("silence_end:")[1].strip().split("|")[0]))
+                except Exception:
+                    pass
+        pauses = []
+        for s, e in zip(starts, ends):
+            if 0 < s < ad and 0 < e < ad and e > s:
+                pauses.append((s + e) / 2.0)
+        return sorted(pauses)
+    except Exception:
+        return []
+
 def select_verses(passage, reciter):
     """v9 : TOUS les versets du passage. Chaque écran affiche son texte avec un
     surlignage karaoké qui suit la récitation mot par mot. Le timing de ce
@@ -1941,6 +1981,7 @@ def select_verses(passage, reciter):
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
     ayah_word_ts        = {}  # (s,a,qid) → [(start_s,end_s), ...] sur TOUTE l'ayah, ou None si indisponible
     ayah_word_before    = {}  # (s,a,qid) → nb de mots déjà consommés par les sous-parties précédentes
+    ayah_last_end       = {}  # (s,a,qid) → fin (s) de la dernière fenêtre émise (chaîne les écrans sans trou/recouvrement)
 
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
@@ -1960,7 +2001,10 @@ def select_verses(passage, reciter):
                 )
             ad      = get_audio_dur(audio) if audio else 4.5
             weights = _screen_char_weights(ayah_groups[key])
-            ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
+            # Pauses réelles détectées uniquement si l'ayah est répartie sur
+            # plusieurs écrans (sinon inutile) — best-effort, ~1s de calcul ffmpeg.
+            pause_times = _detect_pause_times(audio, ad) if len(weights) > 1 else []
+            ayah_audio_cache[key]   = (audio, ad, weights, sum(weights), pause_times)
             ayah_weight_before[key] = 0
             ayah_subpart_idx[key]   = 0
             ayah_word_before[key]   = 0
@@ -1976,18 +2020,38 @@ def select_verses(passage, reciter):
         else:
             print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
 
-        audio, ad, weights, total_weight = ayah_audio_cache[key]
+        audio, ad, weights, total_weight, pause_times = ayah_audio_cache[key]
         idx  = ayah_subpart_idx[key]
         w    = weights[idx]
         is_last_subpart = (idx == len(weights) - 1)
 
         # ── Fenêtre temporelle de cette sous-partie dans l'audio complet ──────
+        # window_start = où s'est arrêté l'écran précédent (valeur EXACTE, déjà
+        # éventuellement aimantée sur une pause réelle) — jamais recalculé
+        # indépendamment, sinon un trou/recouvrement apparaît entre écrans.
         w_before     = ayah_weight_before[key]
-        window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
-        window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
+        window_start = ayah_last_end.get(key, 0.0)
+        raw_end      = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
+        window_end   = raw_end
+        if not is_last_subpart and pause_times:
+            # 🔧 FIX décalage karaoké multi-écrans : au lieu de couper au point
+            # proportionnel "brut" (qui ignore le rythme réel de la récitation),
+            # on aimante la coupure sur la pause de récitation détectée la plus
+            # proche — MAIS seulement si elle est raisonnablement proche de
+            # l'estimation proportionnelle (tolérance ~40% de la durée moyenne
+            # d'un écran), pour ne jamais sauter sur la mauvaise pause si le
+            # texte de cet écran est très déséquilibré par rapport aux autres.
+            avg_screen_dur = ad / max(1, len(weights))
+            tol = max(0.35, avg_screen_dur * 0.45)
+            candidates = [p for p in pause_times if p > window_start]
+            if candidates:
+                nearest = min(candidates, key=lambda p: abs(p - raw_end))
+                if abs(nearest - raw_end) <= tol:
+                    window_end = nearest
         window_start = max(0.0, min(window_start, ad))
         window_end   = max(window_start + 0.05, min(window_end, ad))
         window_dur   = window_end - window_start
+        ayah_last_end[key] = window_end
 
         ayah_weight_before[key] = w_before + w
         ayah_subpart_idx[key]   = idx + 1
@@ -2044,7 +2108,7 @@ def select_verses(passage, reciter):
     for verse in sel:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         if key not in seen_keys:
-            audio, ad, _, _ = ayah_audio_cache[key]
+            audio, ad, _, _, _ = ayah_audio_cache[key]
             seen_audio.append((audio, ad))
             seen_keys.add(key)
 
@@ -2177,10 +2241,104 @@ MAX_GENERATE_ATTEMPTS = int(os.getenv("MAX_GENERATE_ATTEMPTS", "100000"))
 RETRY_PAUSE_S         = float(os.getenv("RETRY_PAUSE_S", "5"))
 
 # ═══════════════════════════════════════════════════════════════════════════
-# v11 : Troncature à une durée cible (Shorts/Reels ~35s) + écran outro final
+# v11 : Troncature à une durée cible (Shorts/Reels ~35s) + écrans hook/outro
 # ═══════════════════════════════════════════════════════════════════════════
 MAX_VIDEO_TARGET_S = float(os.getenv("MAX_VIDEO_TARGET_S", "35"))
-OUTRO_DUR_S = 1.2
+
+# 🔧 Durées VERROUILLÉES sur un nombre de frames entier (même principe que
+# BREATH_FRAMES/BREATH_DUR) : la durée du silence audio ajoutée (padding en fin,
+# silence en début) est dérivée du nombre de frames vidéo réellement rendues,
+# jamais l'inverse — ça garantit zéro dérive audio/vidéo sur ces écrans,
+# exactement la même classe de bug que le fix karaoké breath plus haut.
+HOOK_DUR_S     = 1.4
+HOOK_FRAMES    = int(round(HOOK_DUR_S * FPS))
+HOOK_DUR       = HOOK_FRAMES / FPS
+OUTRO_DUR_S    = 1.2
+OUTRO_FRAMES   = int(round(OUTRO_DUR_S * FPS))
+OUTRO_DUR      = OUTRO_FRAMES / FPS
+
+# ── Banques de hooks (ouverture) et CTA (fin), sélectionnées par mots-clés du
+# thème du passage. Objectif : un vrai "scroll-stopper" dans la 1ère seconde
+# et un vrai déclencheur de commentaire/partage en fin de vidéo, plutôt que
+# la seule mention passive "Follow for daily reminders".
+THEME_HOOKS = {
+    ("patience", "hardship", "trial", "steadfast"): [
+        "This verse carries you through your hardest days",
+        "Read this before you give up",
+        "For when everything feels too heavy",
+    ],
+    ("hope", "never lose hope", "despair"): [
+        "Never lose hope — Allah says it Himself",
+        "This is for anyone about to give up",
+    ],
+    ("mercy", "forgiv"): [
+        "No matter what you've done, this is for you",
+        "Allah's mercy is bigger than your mistakes",
+    ],
+    ("gratitude", "blessing", "generosity"): [
+        "Read this and notice what you've been given",
+    ],
+    ("death", "hereafter", "judgment", "grave", "resurrection"): [
+        "A reminder none of us can escape",
+        "This life is not the final stop",
+    ],
+    ("dua", "supplication", "prayer of"): [
+        "A dua straight from the Quran",
+        "Say this when you don't know what to say",
+    ],
+    ("heart", "peace", "reassured", "steadfast heart"): [
+        "For the heart that feels restless",
+    ],
+    ("guidance", "light", "path", "straight path"): [
+        "Feeling lost? Start here",
+    ],
+    ("parent", "brotherhood", "family"): [
+        "A reminder every family needs to hear",
+    ],
+    ("trust", "reliance", "sufficient", "hasbunallah"): [
+        "Read this next time you feel like it's all on you",
+    ],
+}
+GENERIC_HOOKS = [
+    "One verse. Read it slowly.",
+    "This might be the reminder you needed today",
+    "Stop scrolling — read this first",
+    "Something to sit with today",
+    "A verse worth remembering",
+]
+
+THEME_CTAS = {
+    ("patience", "hardship", "trial", "steadfast"): "What's testing your patience right now?",
+    ("hope", "despair"): "What are you holding onto hope for?",
+    ("mercy", "forgiv"): "Who do you need to forgive today?",
+    ("gratitude", "blessing"): "What are you grateful for today?",
+    ("dua", "supplication"): "Save this dua for later",
+    ("parent", "brotherhood", "family"): "Tag someone who needs to see this",
+    ("guidance", "light", "path"): "Save this for when you feel lost",
+}
+GENERIC_CTAS = [
+    "Which verse spoke to you today?",
+    "Save this for when you need it",
+    "Share this with someone who needs it",
+]
+
+def _pick_by_theme(title, theme_bank, generic_bank):
+    t = title.lower()
+    matches = []
+    for keywords, val in theme_bank.items():
+        if any(k in t for k in keywords):
+            matches.append(val)
+    if matches:
+        chosen = RNG.choice(matches)
+        return RNG.choice(chosen) if isinstance(chosen, list) else chosen
+    chosen = RNG.choice(generic_bank)
+    return RNG.choice(chosen) if isinstance(chosen, list) else chosen
+
+def pick_hook(title):
+    return _pick_by_theme(title, THEME_HOOKS, GENERIC_HOOKS)
+
+def pick_cta(title):
+    return _pick_by_theme(title, THEME_CTAS, GENERIC_CTAS)
 
 def _trim_to_target_duration(verses, audios, aud_durs, frame_counts, word_windows,
                               unique_audios, unique_durs, target_s=MAX_VIDEO_TARGET_S):
@@ -2217,29 +2375,85 @@ def _trim_to_target_duration(verses, audios, aud_durs, frame_counts, word_window
     print(f"   ✂️  Tronqué à {keep_ayat}/{len(unique_durs)} ayat pour rester sous ~{target_s:.0f}s")
     return new_v, new_a, new_ad, new_fc, new_ww, unique_audios[:keep_ayat], unique_durs[:keep_ayat]
 
-def render_outro(base_img, account, alpha_frac):
-    """Écran final court : incite à suivre le compte, sur l'image du dernier verset."""
+def render_hook(base_img, hook_text, alpha_frac):
+    """Écran d'ouverture (~1.4s) : accroche courte affichée AVANT le premier
+    verset, pour arrêter le scroll dans la première seconde. Même image que
+    le premier verset (déjà téléchargée) pour une transition douce."""
+    img = base_img.copy().convert("RGBA")
+    ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d   = ImageDraw.Draw(ov, "RGBA")
+    f = fonts()
+    a = int(255 * max(0., min(1., alpha_frac)))
+    d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.40)))
+    words  = hook_text.split()
+    lines  = _wrap_words(words, f["title"], int(W * 0.82))
+    fh     = _line_h(f["title"]) + 10
+    y      = H // 2 - (len(lines) * fh) // 2
+    for line in lines:
+        text = " ".join(w for _, w, _ in line)
+        lw   = f["title"].getbbox(text)[2] - f["title"].getbbox(text)[0]
+        x    = W // 2 - lw // 2
+        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.65)))
+        d.text((x, y), text, font=f["title"], fill=(255, 250, 240, a))
+        y += fh
+    return Image.alpha_composite(img, ov).convert("RGB")
+
+def render_outro(base_img, cta_text, account, alpha_frac):
+    """Écran final court : question d'engagement (commentaires/partages) +
+    rappel du compte, sur l'image du dernier verset."""
     img = base_img.copy().convert("RGBA")
     ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(ov, "RGBA")
     f = fonts()
     a = int(255 * max(0., min(1., alpha_frac)))
     d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.35)))
-    for msg, fnt, y in [("Follow for daily reminders", f["title"], H // 2 - 40),
-                         (account, f["small"], H // 2 + 30)]:
-        w_ = fnt.getbbox(msg)[2] - fnt.getbbox(msg)[0]
-        x_ = W // 2 - w_ // 2
-        d.text((x_ + 2, y + 3), msg, font=fnt, fill=(0, 0, 0, int(a * 0.6)))
-        d.text((x_, y), msg, font=fnt, fill=(255, 215, 80, a))
+    words = cta_text.split()
+    lines = _wrap_words(words, f["title"], int(W * 0.82))
+    fh    = _line_h(f["title"]) + 10
+    y     = H // 2 - 60 - (len(lines) * fh) // 2
+    for line in lines:
+        text = " ".join(w for _, w, _ in line)
+        lw   = f["title"].getbbox(text)[2] - f["title"].getbbox(text)[0]
+        x    = W // 2 - lw // 2
+        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.6)))
+        d.text((x, y), text, font=f["title"], fill=(255, 215, 80, a))
+        y += fh
+    w_ = f["small"].getbbox(account)[2] - f["small"].getbbox(account)[0]
+    x_ = W // 2 - w_ // 2
+    ay = y + 20
+    d.text((x_ + 2, ay + 3), account, font=f["small"], fill=(0, 0, 0, int(a * 0.6)))
+    d.text((x_, ay), account, font=f["small"], fill=(255, 255, 255, int(a * 0.85)))
     return Image.alpha_composite(img, ov).convert("RGB")
 
 def _pad_audio_silence(audio_path, pad_s, out_path):
-    """Rallonge la piste audio mixée d'un silence de pad_s secondes, pour
-    qu'elle couvre aussi les frames de l'écran outro ajoutées après le
-    dernier verset (sinon ffmpeg -shortest coupe l'outro visuellement)."""
+    """Rallonge la piste audio mixée d'un silence de pad_s secondes EN FIN,
+    pour qu'elle couvre les frames de l'écran outro (sinon ffmpeg -shortest
+    coupe l'outro visuellement). pad_s doit venir d'un nombre de frames
+    verrouillé (OUTRO_DUR), jamais d'une durée brute arrondie séparément."""
     r = subprocess.run(
         ["ffmpeg", "-y", "-i", str(audio_path), "-af", f"apad=pad_dur={pad_s}",
          "-c:a", "aac", "-b:a", "192k", str(out_path)],
+        capture_output=True
+    )
+    return out_path if r.returncode == 0 else audio_path
+
+def _prepend_audio_silence(audio_path, pad_s, out_path):
+    """Insère pad_s secondes de silence AVANT la piste audio mixée, pour
+    couvrir l'écran hook ajouté avant le premier verset. Même principe de
+    verrouillage que _pad_audio_silence (pad_s doit venir de HOOK_DUR)."""
+    silence_path = OUT_DIR / "cache" / f"silence_hook_{round(pad_s,3)}.aac"
+    if not silence_path.exists():
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+             "-t", str(pad_s), "-c:a", "aac", "-b:a", "192k", str(silence_path)],
+            capture_output=True
+        )
+    if not silence_path.exists():
+        return audio_path
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-i", str(silence_path), "-i", str(audio_path),
+         "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[aout]",
+         "-map", "[aout]", "-c:a", "aac", "-b:a", "192k", str(out_path)],
         capture_output=True
     )
     return out_path if r.returncode == 0 else audio_path
@@ -2308,6 +2522,24 @@ def generate(passage_idx=None):
     total_frames  = sum(frame_counts) + breath_frames * n_breaths
     total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
+
+    # ── Écran hook (accroche ~1.4s) AVANT le premier verset — scroll-stopper.
+    # Sur l'image du 1er verset, texte accrocheur choisi selon le thème du
+    # passage. gi part de 0 ici ; la boucle des versets continue ensuite le
+    # compteur, donc l'audio doit être précédé d'un silence de durée HOOK_DUR
+    # (verrouillée sur HOOK_FRAMES) pour rester calé — voir _prepend_audio_silence.
+    hook_text = pick_hook(passage["title"])
+    hook_sc   = scenes[0][0]
+    hook_fade = max(1, int(HOOK_FRAMES * 0.35))
+    for hi in range(HOOK_FRAMES):
+        frame = ken_burns(hook_sc, 0.0)
+        ha_in  = hi / hook_fade
+        ha_out = (HOOK_FRAMES - 1 - hi) / hook_fade
+        ha     = max(0.0, min(1.0, ha_in, ha_out))
+        frame = render_hook(frame, hook_text, ha)
+        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+        gi += 1
+
     for vi in range(n):
         verse   = verses[vi]
         aud_dur_v = aud_durs[vi]
@@ -2377,28 +2609,29 @@ def generate(passage_idx=None):
                 gi += 1
         print(f"  Verset {vi+1} OK")
 
-    # ── Écran outro : quelques frames sur la dernière image, incitant à suivre
-    # le compte. Fondu entrant rapide, tenu jusqu'à la fin du clip. Ces frames
-    # n'ont pas de son propre — c'est le silence de padding audio ajouté
-    # plus bas qui les couvre.
-    outro_frames = max(1, int(FPS * OUTRO_DUR_S))
+    # ── Écran outro : quelques frames sur la dernière image, avec une question
+    # d'engagement liée au thème (déclencheur de commentaire/partage) + le
+    # compte. Ces frames n'ont pas de son propre — c'est le silence de padding
+    # audio ajouté plus bas qui les couvre.
+    cta_text     = pick_cta(passage["title"])
     last_sc, _   = scenes[n - 1]
     last_kb      = p["kb"][n - 1]
-    outro_fade   = max(1, int(outro_frames * 0.4))
-    for oi in range(outro_frames):
+    outro_fade   = max(1, int(OUTRO_FRAMES * 0.4))
+    for oi in range(OUTRO_FRAMES):
         frame = ken_burns(last_sc, 1.0, **last_kb)
         oa    = min(1.0, oi / outro_fade)
-        frame = render_outro(frame, ACCOUNT, oa)
+        frame = render_outro(frame, cta_text, ACCOUNT, oa)
         frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
         gi += 1
 
     print(f"{gi} frames rendues")
-    total_dur = gi / FPS   # 🔧 recalculé une dernière fois pour inclure les frames outro
+    total_dur = gi / FPS   # 🔧 recalculé une dernière fois pour inclure les frames hook + outro
     audio_track = mix_audio(unique_audios, unique_durs, audio_dur)
     if not audio_track or not Path(audio_track).exists():
         # 🔧 FIX vidéo muette : ne jamais encoder sans piste audio valide.
         raise AudioMissingError("Piste audio mixée introuvable après mix_audio() — abandon plutôt que vidéo muette.")
-    audio_track = _pad_audio_silence(audio_track, OUTRO_DUR_S, OUT_DIR / "cache" / "audio_padded.aac")
+    audio_track = _pad_audio_silence(audio_track, OUTRO_DUR, OUT_DIR / "cache" / "audio_padded.aac")
+    audio_track = _prepend_audio_silence(audio_track, HOOK_DUR, OUT_DIR / "cache" / "audio_hooked.aac")
     today = datetime.date.today().strftime("%Y%m%d")
     out   = OUT_DIR / f"quran_{today}_s{RUN_SEED%99999:05d}.mp4"
     print(f"Encodage...")
