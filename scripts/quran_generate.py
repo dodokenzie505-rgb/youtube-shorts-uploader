@@ -35,7 +35,7 @@ print("\n🚀 Démarrage de la génération...\n")
 
 import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter, ImageStat
 import urllib.request
 
 W, H      = 1080, 1920
@@ -1543,16 +1543,78 @@ def cinematic(img, p):
     result = ImageEnhance.Brightness(result).enhance(1.12)
     return result
 
+def _is_valid_nature_photo(img):
+    """
+    Filtre heuristique SANS dépendance ML (rapide, testable localement) :
+    rejette deux cas indésirables signalés explicitement —
+      1) "Que de la couleur" : image quasi unie (dégradé/placeholder cassé,
+         faible variance de luminosité) plutôt qu'une vraie photo texturée.
+      2) "Immeubles" : forte signature architecturale — grille dense de
+         lignes droites horizontales ET verticales très marquées (typique
+         d'une façade avec fenêtres alignées), qu'on veut éviter au profit
+         de paysages organiques (montagnes, forêts, mer, désert...).
+    Best-effort et volontairement permissif en cas de doute : on préfère
+    accepter une vraie photo de nature à tort rejetée que bloquer tout le
+    pipeline. Sert de garde-fou supplémentaire ; le vrai tri se fait déjà
+    en amont via les mots-clés 100% nature de la liste PHOTOS.
+    """
+    small = img.convert("L").resize((240, 427))
+    if ImageStat.Stat(small).stddev[0] < 12:
+        return False  # quasi plat → rejeté ("seulement des couleurs")
+
+    edges = small.filter(ImageFilter.FIND_EDGES)
+    w, h  = edges.size
+    px    = edges.load()
+    col_sums = [0] * w
+    row_sums = [0] * h
+    for y in range(h):
+        for x in range(w):
+            v = px[x, y]
+            col_sums[x] += v
+            row_sums[y] += v
+
+    def count_peaks(sums):
+        m = max(sums) or 1
+        thresh = m * 0.55
+        peaks, above = 0, False
+        for v in sums:
+            if v > thresh and not above:
+                peaks += 1
+                above = True
+            elif v <= thresh:
+                above = False
+        return peaks
+
+    col_peaks = count_peaks(col_sums)
+    row_peaks = count_peaks(row_sums)
+    # Une façade avec de nombreuses fenêtres alignées produit BEAUCOUP de
+    # pics nets et réguliers dans les deux directions à la fois — un
+    # paysage naturel (montagnes, arbres, vagues...) n'en produit presque
+    # jamais autant simultanément dans les deux axes.
+    if col_peaks >= 14 and row_peaks >= 10:
+        return False
+    return True
+
 def get_scene(idx, p):
-    real = p["photo_indices"][idx % len(p["photo_indices"])]
-    url, theme = PHOTOS[real]
-    cache = OUT_DIR / "cache" / f"photo_{real:03d}.jpg"
-    if dl_image(url, cache):
-        try:
-            img = Image.open(str(cache)).convert("RGB").resize((W, H), Image.LANCZOS)
-            return cinematic(img, p), theme
-        except:
-            pass
+    real0   = p["photo_indices"][idx % len(p["photo_indices"])]
+    n_total = len(PHOTOS)
+    # 🔧 FIX "immeubles / seulement des couleurs" : si le candidat initial ne
+    # passe pas le filtre (_is_valid_nature_photo), on essaie le suivant dans
+    # TOUTE la liste PHOTOS (pas seulement le pool de cette vidéo), en
+    # boucle, jusqu'à épuiser les 100% des candidats. Le dégradé procédural
+    # ne reste qu'un ultime filet de sécurité (réseau totalement coupé).
+    for attempt in range(n_total):
+        real = (real0 + attempt) % n_total
+        url, theme = PHOTOS[real]
+        cache = OUT_DIR / "cache" / f"photo_{real:03d}.jpg"
+        if dl_image(url, cache):
+            try:
+                img = Image.open(str(cache)).convert("RGB").resize((W, H), Image.LANCZOS)
+                if _is_valid_nature_photo(img):
+                    return cinematic(img, p), theme
+                print(f"   ⚠ Photo '{theme}' écartée (aspect non naturel / trop plat) — candidat suivant")
+            except Exception:
+                pass
     img = Image.new("RGB", (W, H))
     d   = ImageDraw.Draw(img)
     cols = [(15,10,30),(40,20,60),(80,30,80),(120,50,40),(180,100,30),(220,160,50)]
@@ -1856,6 +1918,33 @@ def _load_aligner():
         _ALIGNER["available"] = False
         return None
 
+_ARABIC_DIACRITICS = (
+    "\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0653\u0654\u0655\u0656"
+    "\u0657\u0658\u0659\u065A\u065B\u065C\u065D\u065E\u065F\u0670\u06D6\u06D7"
+    "\u06D8\u06D9\u06DA\u06DB\u06DC\u06DF\u06E0\u06E1\u06E2\u06E3\u06E4\u06E7"
+    "\u06E8\u06EA\u06EB\u06EC\u06ED"
+)
+_TASHKEEL_TABLE = {ord(c): None for c in _ARABIC_DIACRITICS}
+
+def _strip_tashkeel(text):
+    """
+    🔧 FIX cause probable du "jamais d'alignement réel" : le texte coranique
+    utilisé ici est ENTIÈREMENT vocalisé (harakat, chadda, madda, tanwin...),
+    alors que ctc-forced-aligner / uroman sont conçus et testés pour de
+    l'arabe standard NON vocalisé (presse, Wikipedia...). Envoyer du texte
+    pleinement vocalisé à la romanisation produit très probablement une
+    tokenisation différente de celle attendue par le modèle d'alignement,
+    ce qui faisait échouer la vérification `len(words) == n_expected`
+    QUASI À CHAQUE FOIS et forçait un repli silencieux sur l'heuristique —
+    autrement dit, l'alignement "réel" ne s'activait peut-être jamais en
+    pratique. On retire donc le tashkeel avant romanisation/alignement
+    (retirer des diacritiques ne change ni le nombre de mots ni leur ordre,
+    seulement les caractères À L'INTÉRIEUR de chaque mot) ; le texte affiché
+    à l'écran, lui, reste intégralement vocalisé — seul l'alignement
+    travaille sur la version simplifiée.
+    """
+    return text.translate(_TASHKEEL_TABLE)
+
 def _align_words(audio_path, full_text, cache_key):
     """
     Retourne [(start_s, end_s), ...] — un tuple par mot de `full_text.split()` —
@@ -1883,9 +1972,10 @@ def _align_words(audio_path, full_text, cache_key):
             load_audio, generate_emissions, preprocess_text,
             get_alignments, get_spans, postprocess_results,
         )
+        text_for_align = _strip_tashkeel(full_text)
         waveform = load_audio(str(audio_path), model.dtype, model.device)
         emissions, stride = generate_emissions(model, waveform, batch_size=8)
-        tokens_starred, text_starred = preprocess_text(full_text, romanize=True, language="ara")
+        tokens_starred, text_starred = preprocess_text(text_for_align, romanize=True, language="ara")
         segments, scores, blank_token = get_alignments(emissions, tokens_starred, tokenizer)
         spans  = get_spans(tokens_starred, segments, blank_token)
         words  = postprocess_results(text_starred, spans, stride, scores)
