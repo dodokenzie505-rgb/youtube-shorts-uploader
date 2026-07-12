@@ -61,8 +61,14 @@ import urllib.request
 
 W, H      = 1080, 1920
 FPS       = 24
-# v7 : PAS de limite de durée — on joue TOUS les versets du passage sans coupure
-MAX_DUR   = None   # Pas de limite : la récitation n'est jamais coupée
+# 🎯 PLAFOND DE DURÉE (rétention Shorts) : v7 ne coupait JAMAIS un passage, ce
+# qui pouvait produire des vidéos de plusieurs minutes — mauvais pour le taux
+# de complétion, le signal le plus important pour la distribution algorithmique
+# des Shorts. On plafonne maintenant la durée de RÉCITATION cumulée (hors
+# hook/outro/breath) ; l'ajout de nouvelles ayat s'arrête dès que ce seuil est
+# atteint, TOUJOURS à une frontière d'ayah — un audio en cours n'est jamais
+# coupé. Réglable via la variable d'environnement MAX_RECITATION_DUR_S.
+MAX_RECITATION_DUR = float(os.getenv("MAX_RECITATION_DUR_S", "42"))
 BREATH    = 0.40   # Silence naturel entre versets (respecte le rythme de la récitation)
 # 🔧 FIX karaoké parfait : le nombre de frames vidéo du breath (BREATH_FRAMES) et la
 # durée AUDIO du silence inséré entre versets DOIVENT être calculés depuis la MÊME
@@ -1291,7 +1297,14 @@ print(f"   📚 {len(PASSAGES)} passages disponibles au total ({len(CURATED_PASS
 # RECITATEURS — 21 récitateurs de qualité
 # ═══════════════════════════════════════════════════════════════════════════
 RECITERS = [
-    {"name": "Mishary Rashid Alafasy",       "qid": 1,   "ev": "Alafasy_128kbps",              "flag": "🇰🇼"},
+    # 🔧 FIX copyright : "Mishary Rashid Alafasy" (qid 1) retiré du pool.
+    # Ses enregistrements sont enregistrés dans YouTube Content ID avec une
+    # politique "durée maximale" — toute vidéo utilisant plus de quelques
+    # secondes d'affilée de son audio est bloquée automatiquement dans le
+    # monde entier (pas un strike, mais la vidéo reste illisible). Comme ce
+    # script récite des passages complets (bien au-delà de ce seuil), le
+    # blocage était systématique. Les autres récitateurs ci-dessous n'ont pas
+    # ce problème rapporté à ce jour.
     {"name": "Abdul Rahman Al-Sudais",       "qid": 2,   "ev": "AbdulSamad_128kbps",           "flag": "🇸🇦"},
     {"name": "Saad Al-Ghamdi",               "qid": 3,   "ev": "Saad_Al-Ghamdi_128kbps",       "flag": "🇸🇦"},
     {"name": "Maher Al-Muaiqly",             "qid": 10,  "ev": "MaherAlMuaiqly128kbps",        "flag": "🇸🇦"},
@@ -1319,8 +1332,13 @@ RECITERS = [
     {"name": "Mostafa Al-Lahoni",             "qid": 73,  "ev": "Mostafa_Lahleh_128kbps",          "flag": "🇪🇬"},
     {"name": "Shuraym et Al-Ghamdi",          "qid": 101, "ev": "Saad_Al-Ghamdi_128kbps",         "flag": "🇸🇦"},
     {"name": "Ibrahim Al-Akhdar",             "qid": 76,  "ev": "Ibrahim_Akhdar_128kbps",          "flag": "🇸🇦"},
-    {"name": "Akram Al-Alaqmi",               "qid": 107, "ev": "Alafasy_128kbps",                "flag": "🇸🇦"},
-    {"name": "Yusuf Al-Shuyoukhi",            "qid": 117, "ev": "Alafasy_128kbps",                "flag": "🇸🇦"},
+    # 🔧 FIX copyright : "Akram Al-Alaqmi" (qid 107) et "Yusuf Al-Shuyoukhi"
+    # (qid 117) ont été retirés — ces deux entrées affichaient un nom différent
+    # mais pointaient en réalité vers le dossier audio "Alafasy_128kbps", donc
+    # c'est la VRAIE voix de Mishary Alafasy qui était utilisée sous un autre
+    # nom. YouTube Content ID reconnaît l'audio (empreinte vocale), pas le nom
+    # affiché dans la vidéo — d'où le blocage mondial même quand un autre nom
+    # de récitateur apparaissait à l'écran.
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1795,8 +1813,10 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     lines_ar  = _wrap_words(words_ar, f["ar"], 920)
     fh        = _line_h(f["ar"]) + 6
     ar_est_h  = len(lines_ar) * (fh + 32) + 10
-    en_lines  = verse["en"].split("\n")
-    en_h      = len(en_lines) * 78
+    en_paragraphs = verse["en"].split("\n")
+    en_wrapped    = [_wrap_words(p.split(), f["en"], 940) for p in en_paragraphs]
+    en_n_lines    = sum(len(p) for p in en_wrapped) or 1
+    en_h          = en_n_lines * 78
     block_h   = ar_est_h + 30 + 56 + 24 + en_h
     ar_top    = H // 2 - block_h // 2 + 20 + dy_anim
     mid       = H // 2 + dy_anim
@@ -1895,14 +1915,20 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     en_af = max(0., min(1., (af - 0.12) / 0.88))
     a_en  = int(255 * _ease_inout(en_af))
     en_y  = ref_y + 56
-    for i, line in enumerate(en_lines):
-        lw = f["en"].getbbox(line)[2] - f["en"].getbbox(line)[0]
-        lx = W//2 - lw//2
-        ly = en_y + i * 78
-        # Ombre riche
-        for dx, dy in _SHADOW_OFFSETS:
-            d.text((lx+dx, ly+dy), line, font=f["en"], fill=(0, 0, 0, min(255, int(a_en*0.55))))
-        d.text((lx, ly), line, font=f["en"], fill=(*_EN_COLOR, a_en))
+    li    = 0
+    for para in en_wrapped:
+        for line in para:
+            line_w = sum(_word_w(f["en"], w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
+            lx = W//2 - line_w // 2
+            ly = en_y + li * 78
+            x  = lx
+            for _, w, ww in line:
+                # Ombre riche
+                for dx, dy in _SHADOW_OFFSETS:
+                    d.text((x+dx, ly+dy), w, font=f["en"], fill=(0, 0, 0, min(255, int(a_en*0.55))))
+                d.text((x, ly), w, font=f["en"], fill=(*_EN_COLOR, a_en))
+                x += ww + WORD_GAP
+            li += 1
 
     # ── 8. Bande basse ornementale ───────────────────────────────────────────
     low_band_y = panel_bottom - 28
@@ -1970,7 +1996,6 @@ def dl_audio(verse, reciter, retries=3):
     urls = [
         f"https://cdn.islamic.network/quran/audio/128/{qid}/{s}{aa}.mp3",
         f"https://everyayah.com/data/{ev}/{ss}{aa}.mp3",
-        f"https://everyayah.com/data/Alafasy_128kbps/{ss}{aa}.mp3",
         f"https://verses.quran.com/{qid}/{s}{aa}.mp3",
     ]
     last_err = None
@@ -2058,12 +2083,21 @@ def select_verses(passage, reciter):
     ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés par les sous-parties précédentes
     ayah_subpart_idx    = {}  # (s,a,qid) → index de la prochaine sous-partie dans ayah_groups[key]
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
+    cum_recitation_dur  = 0.0  # 🎯 durée cumulée de récitation déjà retenue (hors hook/outro/breath)
 
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         ref = verse.get("ref") or f"{verse['surah']}:{verse['ayah']}"
 
         if key not in ayah_audio_cache:
+            # 🎯 PLAFOND DE DURÉE — rétention Shorts : une vidéo qui traîne perd
+            # son taux de complétion (le signal n°1 pour l'algorithme), donc on
+            # arrête d'ajouter de NOUVELLES ayat dès qu'on dépasse MAX_RECITATION_DUR,
+            # toujours à une frontière d'ayah (jamais en coupant un audio en cours).
+            # On garde toujours au moins 1 ayah, même si elle dépasse déjà le plafond
+            # à elle seule (mieux vaut une vidéo un peu longue qu'un passage vide).
+            if sel and cum_recitation_dur >= MAX_RECITATION_DUR:
+                break
             # Première sous-partie de cette ayah : télécharger l'audio
             audio = dl_audio(verse, reciter)
             # 🔧 FIX zéro-décalage / passage complet : si l'audio est introuvable,
@@ -2076,6 +2110,7 @@ def select_verses(passage, reciter):
                     f"{reciter.get('name', '?')} — passage abandonné pour garantir 0 décalage."
                 )
             ad      = get_audio_dur(audio) if audio else 4.5
+            cum_recitation_dur += ad
             weights = _screen_char_weights(ayah_groups[key])
             ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
             ayah_weight_before[key] = 0
