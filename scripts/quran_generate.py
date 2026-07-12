@@ -2443,8 +2443,20 @@ def generate(passage_idx=None):
         n_audio_frames = frame_counts[vi]
         ww_v    = word_windows[vi]   # timing réel des mots pour cet écran, ou None (repli heuristique)
         # Frames pendant la récitation (son actif)
-        fade_in  = max(1, int(FPS * (0.15 if vi == 0 else 0.55)))
-        fade_out = max(1, int(FPS * 0.45))
+        # 🔧 FIX "versets défilent mal / pas carré" : fade_in/fade_out étaient
+        # des durées FIXES (0.55s / 0.45s) indépendantes de la durée réelle du
+        # verset. Pour un verset court (~1s, ex. un seul mot comme "الرَّحْمَٰنُ"),
+        # fade_in+fade_out pouvait manger LA TOTALITÉ de l'écran — le texte
+        # n'avait quasiment aucune fenêtre stable à pleine opacité et
+        # "flashait" au lieu de s'afficher proprement. On plafonne maintenant
+        # chaque fondu à 25% du verset, ce qui garantit toujours au moins 50%
+        # de la durée en palier stable et lisible, quelle que soit la longueur
+        # du verset.
+        desired_fade_in  = max(1, int(FPS * (0.15 if vi == 0 else 0.55)))
+        desired_fade_out = max(1, int(FPS * 0.45))
+        quarter  = max(1, n_audio_frames // 4)
+        fade_in  = max(1, min(desired_fade_in, quarter))
+        fade_out = max(1, min(desired_fade_out, quarter))
         next_sc  = scenes[vi+1][0] if vi < n-1 else None
         next_kb  = p["kb"][vi+1]   if vi < n-1 else None
         n_words  = len(verse["ar"].split())
