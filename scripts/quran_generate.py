@@ -68,7 +68,13 @@ FPS       = 24
 # hook/outro/breath) ; l'ajout de nouvelles ayat s'arrête dès que ce seuil est
 # atteint, TOUJOURS à une frontière d'ayah — un audio en cours n'est jamais
 # coupé. Réglable via la variable d'environnement MAX_RECITATION_DUR_S.
-MAX_RECITATION_DUR = float(os.getenv("MAX_RECITATION_DUR_S", "42"))
+# 🔧 FIX copyright (durée) : les vidéos plus longues (7 versets d'affilée,
+# ~40-90s d'audio d'un même récitateur) dépassaient le seuil de durée autorisé
+# par certains ayants droit en Content ID → blocage mondial automatique. Les
+# anciennes vidéos courtes de l'utilisateur (~25s) n'avaient jamais ce
+# problème. On vise donc ~20s de récitation cumulée (+ hook/outro/breath
+# ≈ 4-5s), soit ~25s au total — aligné sur le format qui a toujours fonctionné.
+MAX_RECITATION_DUR = float(os.getenv("MAX_RECITATION_DUR_S", "20"))
 BREATH    = 0.40   # Silence naturel entre versets (respecte le rythme de la récitation)
 # 🔧 FIX karaoké parfait : le nombre de frames vidéo du breath (BREATH_FRAMES) et la
 # durée AUDIO du silence inséré entre versets DOIVENT être calculés depuis la MÊME
@@ -1311,7 +1317,10 @@ RECITERS = [
     {"name": "Hani Ar-Rifai",                "qid": 5,   "ev": "Hani_Rifai_128kbps",           "flag": "🇸🇦"},
     {"name": "Abu Bakr Al-Shatri",           "qid": 6,   "ev": "Abu_Bakr_Ash-Shaatree_128kbps","flag": "🇸🇦"},
     {"name": "Nasser Al-Qatami",             "qid": 43,  "ev": "Nasser_Alqatami_128kbps",      "flag": "🇸🇦"},
-    {"name": "Yasser Al-Dosari",             "qid": 135, "ev": "Yasser_Ad-Dussary_128kbps",    "flag": "🇸🇦"},
+    # 🔧 FIX copyright : "Yasser Al-Dosari" (qid 135) retiré — revendication
+    # Content ID confirmée sur ses enregistrements (même blocage mondial que
+    # pour Alafasy). Si un autre récitateur déclenche encore ce problème,
+    # retire-le de la même façon ici et signale son nom pour qu'on le note.
     {"name": "Khalid Al-Jalil",              "qid": 53,  "ev": "Khalid_Jalil_128kbps",         "flag": "🇸🇦"},
     {"name": "Ahmad Al-Ajmi",                "qid": 7,   "ev": "Ahmed_ibn_Ali_al-Ajamy_128kbps_UNVERIFIED", "flag": "🇸🇦"},
     {"name": "Saud Al-Shuraim",              "qid": 4,   "ev": "Saud_Al-Shuraym_128kbps",      "flag": "🇸🇦"},
@@ -1694,10 +1703,10 @@ HOOK_LINES = [
     "Somebody needed to hear this today",
     "When you don't know what to say to Allah...",
 ]
-HOOK_DUR      = 1.8
+HOOK_DUR      = 1.4
 HOOK_FRAMES   = int(round(HOOK_DUR * FPS))
 HOOK_AUDIO_DUR = HOOK_FRAMES / FPS   # 🔧 verrouillé sur le nb de frames réel (zéro dérive, même logique que BREATH_DUR)
-OUTRO_DUR     = 2.6
+OUTRO_DUR     = 2.0
 OUTRO_FRAMES  = int(round(OUTRO_DUR * FPS))
 OUTRO_AUDIO_DUR = OUTRO_FRAMES / FPS
 
