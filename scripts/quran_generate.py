@@ -27,6 +27,27 @@ def _ensure_installed():
         import PIL
     except ImportError:
         subprocess.run([sys.executable, "-m", "pip", "install", "Pillow", "-q"], check=True)
+    # 🖋 libraqm : shaping arabe de qualité (jonctions de lettres, diacritiques).
+    # Généralement déjà inclus dans les wheels Pillow ; on l'installe quand
+    # même en best-effort au niveau système pour les cas où ce ne serait pas
+    # le cas (non-bloquant si le paquet n'existe pas sur cette distro).
+    try:
+        subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "libraqm0"],
+                        check=True, timeout=60, capture_output=True)
+    except Exception:
+        pass
+    # 👤 Détection de personnes (visages + silhouettes) sur les photos de fond —
+    # garantit que SEULS des paysages sans humain sont utilisés, quelle que soit
+    # la source. Fonctionne 100% hors-ligne (cascades Haar + HOG intégrées à
+    # OpenCV, aucun téléchargement de modèle au runtime).
+    try:
+        import cv2
+    except ImportError:
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages",
+                             "opencv-python-headless"], check=True, timeout=180)
+        except Exception:
+            pass
 
 _ensure_installed()
 
@@ -35,7 +56,7 @@ print("\n🚀 Démarrage de la génération...\n")
 
 import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter, ImageStat
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 import urllib.request
 
 W, H      = 1080, 1920
@@ -1227,8 +1248,17 @@ def _build_passages_from_api(curated, target_total):
                 ar_text  = v.get("text_uthmani", "").strip()
                 trs      = v.get("translations", [])
                 en_text  = _strip_html(trs[0]["text"]) if trs else ""
-                if not ar_text or not en_text:
+                # 🔧 FIX "versets sautés" : on ne saute JAMAIS une ayah simplement
+                # parce que sa traduction est absente/mal formée — avant, ce cas
+                # faisait disparaître l'ayah du bloc sans laisser de trace, ce qui
+                # créait un "trou" audible (l'audio de cette ayah n'était plus
+                # jamais demandé) et une coupure nette dans la récitation du
+                # passage. On ne saute désormais que si le texte ARABE lui-même
+                # est manquant (cas quasi jamais rencontré en pratique).
+                if not ar_text:
                     continue
+                if not en_text:
+                    en_text = "…"
                 verses_out.append({
                     "ar": ar_text, "en": en_text,
                     "ref": f"{cid}:{ayah_num}", "surah": cid, "ayah": ayah_num,
@@ -1356,7 +1386,16 @@ PHOTOS = [
 def _load_font(paths, size):
     for p in paths:
         try:
-            return ImageFont.truetype(p, size)
+            # 🖋 Layout RAQM (harfbuzz+fribidi, inclus dans les wheels Pillow
+            # récentes) : indispensable pour un rendu arabe VRAIMENT propre —
+            # jonction correcte des lettres, positionnement des diacritiques
+            # (tashkeel), formes contextuelles. Sans ça, PIL peut afficher les
+            # lettres isolées/mal jointes. Repli silencieux sur le layout basique
+            # si raqm n'est pas disponible sur la machine.
+            try:
+                return ImageFont.truetype(p, size, layout_engine=ImageFont.Layout.RAQM)
+            except Exception:
+                return ImageFont.truetype(p, size)
         except:
             pass
     return ImageFont.load_default()
@@ -1383,10 +1422,11 @@ def fonts():
         ]
         _FONTS_CACHE = {
             "ar":      _load_font(AR, 96),    # légèrement agrandi : plus de place sans le halo mot-à-mot
-            "en":      _load_font(IT, 54),    # +2 : traduction légèrement plus grande
+            "en":      _load_font(IT, 62),    # 🔧 +8 : la traduction doit accrocher l'œil en scroll rapide
             "ref":     _load_font(RG, 42),    # +2
             "small":   _load_font(RG, 30),    # +2
             "title":   _load_font(IT, 42),    # +8 : titre beaucoup plus visible
+            "hook":    _load_font(IT, 78),    # accroche d'ouverture — grande et immédiate
         }
     return _FONTS_CACHE
 
@@ -1419,9 +1459,18 @@ def _ease_inout(t):
     return t * t * (3.0 - 2.0 * t)
 
 _SHADOW_OFFSETS  = [(-2,-2),(2,-2),(-2,2),(2,2),(0,4),(1,3),(-1,3)]  # Ombre plus riche
-_EN_COLOR        = (240, 240, 255)         # Traduction : blanc légèrement bleuté
+_EN_COLOR        = (255, 255, 255)         # Traduction : blanc pur, contraste maximal
 _AR_COLOR        = (255, 250, 235)         # Arabe : blanc chaud, légèrement doré
-_AR_GLOW_COLOR   = (255, 225, 150)         # Lueur douce et constante autour du verset
+_AR_GLOW_COLOR   = (110, 205, 165)         # Lueur douce et constante autour du verset (teinte émeraude signature)
+
+# 🎨 PALETTE SIGNATURE — émeraude profond + menthe pâle, plutôt que le
+# "doré générique" utilisé par la quasi-totalité des comptes de versets
+# coraniques. Garder EXACTEMENT la même palette sur toutes les vidéos est ce
+# qui rend un compte reconnaissable en swipant vite sur Shorts/Reels — c'est
+# la signature visuelle du compte, pas un simple choix esthétique ponctuel.
+ACCENT       = (61, 153, 112)    # accent principal (bande, séparateur, dots)
+ACCENT_BRIGHT= (163, 235, 197)   # menthe claire (accents vifs : dot actif, losange, référence)
+ACCENT_TITLE = (214, 242, 226)   # menthe-crème pâle (titre du passage)
 
 def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, **_unused):
     """
@@ -1429,11 +1478,10 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, *
     couleur chaude et lisible pour tout le verset, avec une ombre portée pour
     le détacher du fond et une très légère lueur dorée pour le côté soigné.
     Pas de surlignage mot-à-mot : c'est l'apparition/disparition en fondu de
-    l'écran entier (gérée par l'appelant, calée sur l'audio de CE verset —
-    cf. select_verses/_detect_pause_times) qui fait "coller" le texte à la
-    récitation, sans les fragilités d'un alignement mot-à-mot type ML.
-    `**_unused` absorbe d'éventuels appels avec progress=/word_windows=
-    (compat arrière) sans rien casser.
+    l'écran entier (gérée par l'appelant, calée sur l'audio de CE verset) qui
+    fait "coller" le texte à la récitation, sans effet karaoké.
+    `**_unused` absorbe d'éventuels anciens appels avec progress=/word_windows=
+    pour rester rétro-compatible sans rien casser.
     """
     words = text.split()
     if not words:
@@ -1462,6 +1510,56 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=32, *
         total_h += fh + line_gap
     return total_h
 
+_PERSON_DETECTORS = {"loaded": False, "face": None, "hog": None}
+
+def _load_person_detectors():
+    if _PERSON_DETECTORS["loaded"]:
+        return _PERSON_DETECTORS["face"], _PERSON_DETECTORS["hog"]
+    _PERSON_DETECTORS["loaded"] = True
+    try:
+        import cv2
+        face = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        hog  = cv2.HOGDescriptor()
+        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        _PERSON_DETECTORS["face"] = face if not face.empty() else None
+        _PERSON_DETECTORS["hog"]  = hog
+    except Exception as e:
+        print(f"   ⚠ Détecteur de personnes indisponible ({type(e).__name__}: {e}) — "
+              f"les photos ne seront pas filtrées automatiquement.")
+    return _PERSON_DETECTORS["face"], _PERSON_DETECTORS["hog"]
+
+def _contains_person(path):
+    """
+    True si un visage OU une silhouette humaine (même de dos / au loin, style
+    randonneur sur une crête — très fréquent dans les photos de paysage stock)
+    est détecté dans l'image. Utilisé pour ne JAMAIS garder une photo avec un
+    humain dedans, conformément à la consigne "seulement des paysages".
+    En cas d'échec du détecteur (dépendance absente), on considère l'image
+    comme SÛRE par défaut (pas de faux-négatif bloquant tout le pipeline) —
+    mais _ensure_installed() tente déjà d'installer opencv au démarrage.
+    """
+    face_det, hog = _load_person_detectors()
+    if face_det is None and hog is None:
+        return False
+    try:
+        import cv2
+        img = cv2.imread(str(path))
+        if img is None:
+            return False
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if face_det is not None:
+            faces = face_det.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(40, 40))
+            if len(faces) > 0:
+                return True
+        if hog is not None:
+            small = cv2.resize(img, (min(640, img.shape[1]), min(1138, img.shape[0])))
+            rects, weights = hog.detectMultiScale(small, winStride=(8, 8), padding=(8, 8), scale=1.05)
+            if len(rects) > 0 and max(list(weights) + [0]) > 0.5:
+                return True
+        return False
+    except Exception:
+        return False
+
 def dl_image(url, path):
     if path.exists():
         return True
@@ -1469,6 +1567,16 @@ def dl_image(url, path):
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=25) as r:
             path.write_bytes(r.read())
+        # 👤 Rejet immédiat si un humain est détecté — la photo n'est jamais
+        # utilisée, et le cache n'est pas gardé pour qu'un autre essai éventuel
+        # ne réutilise pas silencieusement ce fichier.
+        if _contains_person(path):
+            print(f"   👤 Personne détectée sur l'image téléchargée — rejetée (paysages uniquement).")
+            try:
+                path.unlink()
+            except Exception:
+                pass
+            return False
         return True
     except Exception as e:
         print(f"   Image DL: {e}")
@@ -1496,77 +1604,24 @@ def cinematic(img, p):
     result = ImageEnhance.Brightness(result).enhance(1.12)
     return result
 
-def _is_valid_nature_photo(img):
-    """
-    Filtre heuristique SANS dépendance ML (rapide, testable localement) :
-    rejette deux cas indésirables signalés explicitement —
-      1) "Que de la couleur" : image quasi unie (dégradé/placeholder cassé,
-         faible variance de luminosité) plutôt qu'une vraie photo texturée.
-      2) "Immeubles" : forte signature architecturale — grille dense de
-         lignes droites horizontales ET verticales très marquées (typique
-         d'une façade avec fenêtres alignées), qu'on veut éviter au profit
-         de paysages organiques (montagnes, forêts, mer, désert...).
-    Best-effort et volontairement permissif en cas de doute : on préfère
-    accepter une vraie photo de nature à tort rejetée que bloquer tout le
-    pipeline. Sert de garde-fou supplémentaire ; le vrai tri se fait déjà
-    en amont via les mots-clés 100% nature de la liste PHOTOS.
-    """
-    small = img.convert("L").resize((240, 427))
-    if ImageStat.Stat(small).stddev[0] < 12:
-        return False  # quasi plat → rejeté ("seulement des couleurs")
-
-    edges = small.filter(ImageFilter.FIND_EDGES)
-    w, h  = edges.size
-    px    = edges.load()
-    col_sums = [0] * w
-    row_sums = [0] * h
-    for y in range(h):
-        for x in range(w):
-            v = px[x, y]
-            col_sums[x] += v
-            row_sums[y] += v
-
-    def count_peaks(sums):
-        m = max(sums) or 1
-        thresh = m * 0.55
-        peaks, above = 0, False
-        for v in sums:
-            if v > thresh and not above:
-                peaks += 1
-                above = True
-            elif v <= thresh:
-                above = False
-        return peaks
-
-    col_peaks = count_peaks(col_sums)
-    row_peaks = count_peaks(row_sums)
-    # Une façade avec de nombreuses fenêtres alignées produit BEAUCOUP de
-    # pics nets et réguliers dans les deux directions à la fois — un
-    # paysage naturel (montagnes, arbres, vagues...) n'en produit presque
-    # jamais autant simultanément dans les deux axes.
-    if col_peaks >= 14 and row_peaks >= 10:
-        return False
-    return True
-
 def get_scene(idx, p):
-    real0   = p["photo_indices"][idx % len(p["photo_indices"])]
-    n_total = len(PHOTOS)
-    # 🔧 FIX "immeubles / seulement des couleurs" : si le candidat initial ne
-    # passe pas le filtre (_is_valid_nature_photo), on essaie le suivant dans
-    # TOUTE la liste PHOTOS (pas seulement le pool de cette vidéo), en
-    # boucle, jusqu'à épuiser les 100% des candidats. Le dégradé procédural
-    # ne reste qu'un ultime filet de sécurité (réseau totalement coupé).
-    for attempt in range(n_total):
-        real = (real0 + attempt) % n_total
-        url, theme = PHOTOS[real]
-        cache = OUT_DIR / "cache" / f"photo_{real:03d}.jpg"
+    real = p["photo_indices"][idx % len(p["photo_indices"])]
+    tried = set()
+    # Jusqu'à 4 tentatives : si une photo est rejetée (personne détectée) ou
+    # échoue au téléchargement, on essaie d'autres photos de la banque plutôt
+    # que de tomber directement sur le dégradé de secours.
+    for attempt in range(4):
+        cand = real if attempt == 0 else RNG.randrange(len(PHOTOS))
+        if cand in tried:
+            continue
+        tried.add(cand)
+        url, theme = PHOTOS[cand]
+        cache = OUT_DIR / "cache" / f"photo_{cand:03d}.jpg"
         if dl_image(url, cache):
             try:
                 img = Image.open(str(cache)).convert("RGB").resize((W, H), Image.LANCZOS)
-                if _is_valid_nature_photo(img):
-                    return cinematic(img, p), theme
-                print(f"   ⚠ Photo '{theme}' écartée (aspect non naturel / trop plat) — candidat suivant")
-            except Exception:
+                return cinematic(img, p), theme
+            except:
                 pass
     img = Image.new("RGB", (W, H))
     d   = ImageDraw.Draw(img)
@@ -1604,6 +1659,123 @@ def make_params(n):
         "kb":            kb,
     }
 
+# 🎯 ACCROCHE D'OUVERTURE — les 1-2 premières secondes décident si quelqu'un
+# reste sur un Short. Un verset qui apparaît doucement en fondu n'est PAS un
+# hook : ces phrases créent un "pattern interrupt" (interpellation directe,
+# question, promesse de valeur) avant même de montrer le verset — technique
+# de rétention éprouvée sur les formats courts verticaux.
+HOOK_LINES = [
+    "When life feels too heavy...",
+    "If you needed a sign today —",
+    "Before you scroll past this...",
+    "For everyone who feels alone right now",
+    "Read this before your day starts",
+    "A reminder you didn't know you needed",
+    "If your heart feels tired lately...",
+    "This is for the ones still holding on",
+    "Somebody needed to hear this today",
+    "When you don't know what to say to Allah...",
+]
+HOOK_DUR      = 1.8
+HOOK_FRAMES   = int(round(HOOK_DUR * FPS))
+HOOK_AUDIO_DUR = HOOK_FRAMES / FPS   # 🔧 verrouillé sur le nb de frames réel (zéro dérive, même logique que BREATH_DUR)
+OUTRO_DUR     = 2.6
+OUTRO_FRAMES  = int(round(OUTRO_DUR * FPS))
+OUTRO_AUDIO_DUR = OUTRO_FRAMES / FPS
+
+def _decorative_band(d, band_y, a, half_w=None):
+    """Bande dorée-émeraude + étoile islamique — factorisée pour être réutilisée
+    par render_frame ET les cartes d'ouverture/fermeture (cohérence visuelle)."""
+    import math as _math
+    line_w_half = half_w or int(W * 0.38)
+    for xt in range(W//2 - line_w_half, W//2 - 44):
+        frac = (xt - (W//2 - line_w_half)) / (line_w_half - 44)
+        d.point((xt, band_y), fill=(*ACCENT, int(a * 0.8 * frac)))
+    for xt in range(W//2 + 44, W//2 + line_w_half):
+        frac = (W//2 + line_w_half - xt) / (line_w_half - 44)
+        d.point((xt, band_y), fill=(*ACCENT, int(a * 0.8 * frac)))
+    cx_star, cy_star = W//2, band_y
+    star_r1, star_r2 = 16, 7
+    pts = []
+    for i in range(16):
+        angle = _math.pi * i / 8 - _math.pi / 2
+        r     = star_r1 if i % 2 == 0 else star_r2
+        pts.extend([cx_star + r * _math.cos(angle), cy_star + r * _math.sin(angle)])
+    d.polygon(pts, fill=(*ACCENT, int(a * 0.9)))
+
+def render_hook_card(base_img, hook_text, alpha_frac):
+    """Carte d'ouverture (1-2s) : accroche courte, grande, centrée — avant même
+    le premier verset. Même palette/decorum que le reste de la vidéo pour que
+    ça reste cohérent, mais un format volontairement plus simple/direct."""
+    img = base_img.copy().convert("RGBA")
+    ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d   = ImageDraw.Draw(ov, "RGBA")
+    f   = fonts()
+    af  = max(0., min(1., alpha_frac))
+    a   = int(255 * af)
+    dy_anim = int((1 - _ease_inout(af)) * 14)
+
+    words = hook_text.split()
+    lines = _wrap_words(words, f["hook"], 880)
+    fh    = _line_h(f["hook"]) + 10
+    block_h = len(lines) * (fh + 20)
+    mid   = H // 2 + dy_anim
+    panel_top    = mid - block_h // 2 - 110
+    panel_bottom = mid + block_h // 2 + 110
+    panel_h      = panel_bottom - panel_top
+    for yi in range(panel_top, panel_bottom):
+        dist = abs(yi - mid) / (panel_h / 2 + 1)
+        sa = int(200 * max(0., 1 - dist ** 1.6))
+        d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
+    _decorative_band(d, panel_top + 26, a, half_w=int(W * 0.3))
+
+    y = mid - block_h // 2
+    for line in lines:
+        line_w = sum(_word_w(f["hook"], w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
+        x = W // 2 - line_w // 2
+        for _, w, ww in line:
+            for dx, dy in _SHADOW_OFFSETS:
+                d.text((x+dx, y+dy), w, font=f["hook"], fill=(0, 0, 0, min(a, 150)))
+            d.text((x, y), w, font=f["hook"], fill=(*ACCENT_TITLE, a))
+            x += ww + WORD_GAP
+        y += fh + 20
+
+    return Image.alpha_composite(img, ov).convert("RGB")
+
+def render_outro_card(base_img, reciter, alpha_frac):
+    """Carte de fermeture (2-3s) : appel à l'action explicite ("Follow for
+    more") + compte — technique éprouvée pour convertir des vues en abonnés
+    sur Shorts/Reels, bien plus efficace qu'un simple fondu de fin muet."""
+    img = base_img.copy().convert("RGBA")
+    ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d   = ImageDraw.Draw(ov, "RGBA")
+    f   = fonts()
+    af  = max(0., min(1., alpha_frac))
+    a   = int(255 * af)
+
+    mid = H // 2
+    panel_top, panel_bottom = mid - 260, mid + 260
+    for yi in range(panel_top, panel_bottom):
+        dist = abs(yi - mid) / ((panel_bottom - panel_top) / 2 + 1)
+        sa = int(205 * max(0., 1 - dist ** 1.6))
+        d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
+    _decorative_band(d, panel_top + 26, a, half_w=int(W * 0.28))
+
+    cta = "Follow for daily reminders"
+    cw  = f["title"].getbbox(cta)[2] - f["title"].getbbox(cta)[0]
+    cx  = W // 2 - cw // 2
+    cy  = mid - 30
+    for dx, dy in _SHADOW_OFFSETS:
+        d.text((cx+dx, cy+dy), cta, font=f["title"], fill=(0, 0, 0, min(a, 150)))
+    d.text((cx, cy), cta, font=f["title"], fill=(*ACCENT_TITLE, a))
+
+    hw = f["small"].getbbox(ACCOUNT)[2] - f["small"].getbbox(ACCOUNT)[0]
+    hy = cy + 70
+    d.text((W//2 - hw//2 + 1, hy + 2), ACCOUNT, font=f["small"], fill=(0, 0, 0, int(a*0.5)))
+    d.text((W//2 - hw//2, hy), ACCOUNT, font=f["small"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
+
+    return Image.alpha_composite(img, ov).convert("RGB")
+
 def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_verses, progress=None, word_windows=None):
     import re as _re, math as _math
     img = base_img.copy().convert("RGBA")
@@ -1624,7 +1796,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     fh        = _line_h(f["ar"]) + 6
     ar_est_h  = len(lines_ar) * (fh + 32) + 10
     en_lines  = verse["en"].split("\n")
-    en_h      = len(en_lines) * 68
+    en_h      = len(en_lines) * 78
     block_h   = ar_est_h + 30 + 56 + 24 + en_h
     ar_top    = H // 2 - block_h // 2 + 20 + dy_anim
     mid       = H // 2 + dy_anim
@@ -1647,12 +1819,12 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     for xt in range(W//2 - line_w_half, W//2 - 44):
         frac = (xt - (W//2 - line_w_half)) / (line_w_half - 44)
         la   = int(a * 0.8 * frac)
-        d.point((xt, band_y), fill=(212, 175, 55, la))
+        d.point((xt, band_y), fill=(*ACCENT, la))
     # Ligne droite
     for xt in range(W//2 + 44, W//2 + line_w_half):
         frac = (W//2 + line_w_half - xt) / (line_w_half - 44)
         la   = int(a * 0.8 * frac)
-        d.point((xt, band_y), fill=(212, 175, 55, la))
+        d.point((xt, band_y), fill=(*ACCENT, la))
     # Étoile à 8 branches (losange croisé)
     cx_star, cy_star = W//2, band_y
     star_r1, star_r2 = 16, 7
@@ -1661,7 +1833,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
         angle = _math.pi * i / 8 - _math.pi / 2
         r     = star_r1 if i % 2 == 0 else star_r2
         pts.extend([cx_star + r * _math.cos(angle), cy_star + r * _math.sin(angle)])
-    d.polygon(pts, fill=(212, 175, 55, int(a * 0.9)))
+    d.polygon(pts, fill=(*ACCENT, int(a * 0.9)))
 
     # ── 3. Titre — plus grand, lettres espacées, avec halo ──────────────────
     title_y = band_y + 22
@@ -1669,11 +1841,11 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     tx = W // 2 - tw // 2
     # Halo titre
     for dx, dy in [(-3,0),(3,0),(0,-3),(0,3),(-2,-2),(2,-2),(-2,2),(2,2)]:
-        d.text((tx+dx, title_y+dy), title, font=f["title"], fill=(212, 175, 55, int(a*0.18)))
+        d.text((tx+dx, title_y+dy), title, font=f["title"], fill=(*ACCENT, int(a*0.18)))
     # Ombre
     d.text((tx+2, title_y+3), title, font=f["title"], fill=(0, 0, 0, int(a*0.6)))
     # Texte principal
-    d.text((tx, title_y), title, font=f["title"], fill=(255, 220, 100, int(a*0.95)))
+    d.text((tx, title_y), title, font=f["title"], fill=(*ACCENT_TITLE, int(a*0.95)))
 
     # ── 4. Verset arabe — surlignage karaoké suivant la récitation ──────────
     ar_h = draw_arabic_text(
@@ -1689,25 +1861,25 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     for xt in range(W//2 - sep_half, W//2 - 30):
         frac = (xt - (W//2 - sep_half)) / max(1, sep_half - 30)
         la   = int(a * 0.9 * frac)
-        d.point((xt, sep_y),     fill=(212, 175, 55, la))
-        d.point((xt, sep_y + 1), fill=(212, 175, 55, la // 2))
+        d.point((xt, sep_y),     fill=(*ACCENT, la))
+        d.point((xt, sep_y + 1), fill=(*ACCENT, la // 2))
     for xt in range(W//2 + 30, W//2 + sep_half):
         frac = (W//2 + sep_half - xt) / max(1, sep_half - 30)
         la   = int(a * 0.9 * frac)
-        d.point((xt, sep_y),     fill=(212, 175, 55, la))
-        d.point((xt, sep_y + 1), fill=(212, 175, 55, la // 2))
+        d.point((xt, sep_y),     fill=(*ACCENT, la))
+        d.point((xt, sep_y + 1), fill=(*ACCENT, la // 2))
     # Losange central
     ds = 9
     d.polygon(
         [(W//2, sep_y - ds), (W//2 + ds, sep_y), (W//2, sep_y + ds), (W//2 - ds, sep_y)],
-        fill=(255, 215, 80, int(a * 0.95))
+        fill=(*ACCENT_BRIGHT, int(a * 0.95))
     )
     # Petits points décoratifs de chaque côté
     for ox in [28, 42]:
         for sx in [-1, 1]:
             d.ellipse(
                 [W//2 + sx*ox - 3, sep_y - 3, W//2 + sx*ox + 3, sep_y + 3],
-                fill=(212, 175, 55, int(a * 0.7))
+                fill=(*ACCENT, int(a * 0.7))
             )
 
     # ── 6. Référence verset ──────────────────────────────────────────────────
@@ -1717,7 +1889,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     rx         = W//2 - rw//2
     # Halo doré
     d.text((rx+2, ref_y+3), _clean_ref, font=f["ref"], fill=(0, 0, 0, int(a*0.55)))
-    d.text((rx, ref_y), _clean_ref, font=f["ref"], fill=(255, 215, 80, int(a*0.95)))
+    d.text((rx, ref_y), _clean_ref, font=f["ref"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
 
     # ── 7. Traduction anglaise (fondu légèrement retardé sur l'arabe) ────────
     en_af = max(0., min(1., (af - 0.12) / 0.88))
@@ -1726,7 +1898,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     for i, line in enumerate(en_lines):
         lw = f["en"].getbbox(line)[2] - f["en"].getbbox(line)[0]
         lx = W//2 - lw//2
-        ly = en_y + i * 68
+        ly = en_y + i * 78
         # Ombre riche
         for dx, dy in _SHADOW_OFFSETS:
             d.text((lx+dx, ly+dy), line, font=f["en"], fill=(0, 0, 0, min(255, int(a_en*0.55))))
@@ -1738,10 +1910,10 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
         frac_l = (xt - (W//2 - line_w_half)) / (2 * line_w_half)
         frac   = 1 - abs(frac_l * 2 - 1)  # pic au centre
         la     = int(a * 0.5 * frac)
-        d.point((xt, low_band_y), fill=(212, 175, 55, la))
+        d.point((xt, low_band_y), fill=(*ACCENT, la))
 
     # ── 9. Dots navigation — avec indicateur glissant stylisé ────────────────
-    dot_y   = int(H * 0.80)
+    dot_y   = int(H * 0.882)
     MAX_DOTS = 12
     if total_verses <= MAX_DOTS:
         dots_start, dots_end = 0, total_verses
@@ -1756,8 +1928,8 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
         xd = start_x + (i - dots_start) * spacing
         if i == verse_num - 1:
             # Dot actif : grand, or vif, avec halo
-            d.ellipse([xd-11, dot_y-11, xd+11, dot_y+11], fill=(212, 175, 55, int(a*0.25)))
-            d.ellipse([xd-8,  dot_y-8,  xd+8,  dot_y+8 ], fill=(255, 215, 80, int(a*0.98)))
+            d.ellipse([xd-11, dot_y-11, xd+11, dot_y+11], fill=(*ACCENT, int(a*0.25)))
+            d.ellipse([xd-8,  dot_y-8,  xd+8,  dot_y+8 ], fill=(*ACCENT_BRIGHT, int(a*0.98)))
         elif i < verse_num - 1:
             # Passés : gris moyen
             d.ellipse([xd-4, dot_y-4, xd+4, dot_y+4], fill=(180, 180, 200, int(a*0.55)))
@@ -1768,11 +1940,11 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     # ── 10. Récitateur + compte ───────────────────────────────────────────────
     rec  = reciter["flag"] + "  " + reciter["name"]
     rw2  = f["small"].getbbox(rec)[2] - f["small"].getbbox(rec)[0]
-    ry2  = int(H * 0.835)
+    ry2  = int(H * 0.915)
     d.text((W//2 - rw2//2 + 1, ry2 + 2), rec, font=f["small"], fill=(0, 0, 0, int(a*0.5)))
-    d.text((W//2 - rw2//2, ry2), rec, font=f["small"], fill=(212, 175, 55, int(a*0.88)))
+    d.text((W//2 - rw2//2, ry2), rec, font=f["small"], fill=(*ACCENT, int(a*0.88)))
     hw   = f["small"].getbbox(ACCOUNT)[2] - f["small"].getbbox(ACCOUNT)[0]
-    hay  = int(H * 0.865)
+    hay  = int(H * 0.950)
     d.text((W//2 - hw//2 + 1, hay + 2), ACCOUNT, font=f["small"], fill=(0, 0, 0, int(a*0.45)))
     d.text((W//2 - hw//2, hay), ACCOUNT, font=f["small"], fill=(255, 255, 255, int(a*0.78)))
 
@@ -1828,99 +2000,50 @@ def get_audio_dur(path):
     except:
         return 4.5
 
-def _arabic_duration_weight(text):
-    """
-    🔧 Amélioration karaoké : un simple compte de lettres traite "قُلْ" (court,
-    3 lettres) et "خَالِدُونَ" (long à l'oral à cause du ا de prolongation)
-    comme proportionnels à leur longueur écrite, alors qu'à l'oral l'écart
-    réel est plus marqué. On pondère donc :
-      - +0.5 par lettre de prolongation naturelle (ا/و/ي/ى, madd ~2 harakat)
-      - +0.6 par chadda (ّ) : la consonne est doublée, donc plus longue
-      - +1.5 par maddah (ٓ, ex. آ) : élongation forte, ~4-6 harakat
-    Résultat : une estimation de durée par mot/écran nettement plus fidèle
-    au rythme réel de la récitation que le compte de lettres brut — utilisée
-    pour répartir un verset sur plusieurs écrans (Ayat Al-Kursi...) et pour
-    le fondu du texte affiché à l'écran.
-    """
-    w = 0.0
-    for ch in text:
-        cat = unicodedata.category(ch)
-        if cat.startswith("L"):
-            w += 1.0
-            if ch in "اوىي":
-                w += 0.5
-        elif ch == "\u0651":      # chadda
-            w += 0.6
-        elif ch == "\u0653":      # maddah (ex. آ)
-            w += 1.5
-    return max(1.0, w)
-
+# ═══════════════════════════════════════════════════════════════════════════
+# ALIGNEMENT FORCÉ MOT-À-MOT (timestamps réels de récitation)
+# ═══════════════════════════════════════════════════════════════════════════
+# Contrairement à une transcription libre (Whisper), l'ALIGNEMENT FORCÉ compare
+# l'audio au texte du verset déjà connu à l'avance — beaucoup plus robuste face
+# aux élongations (madd) et à la prononciation tajweed qui perturbent une
+# reconnaissance vocale classique. On utilise ctc-forced-aligner (modèle MMS,
+# multilingue, gère l'arabe). Chargement paresseux : le modèle (~1.2 Go) n'est
+# téléchargé/chargé QUE si cette fonctionnalité est effectivement utilisée, et
+# tout échec (dépendance absente, pas de réseau, mésalignement...) retombe
+# silencieusement sur l'heuristique de longueur de mot (_screen_char_weights)
+# déjà en place — la génération de la vidéo n'est jamais bloquée par ceci.
+# 🔧 SIMPLIFICATION : l'ancien alignement mot-à-mot (modèle ctc-forced-aligner,
+# téléchargé/installé à la volée via pip + torch au premier lancement) servait
+# uniquement à faire "courir" un surlignage doré mot par mot façon karaoké.
+# Cet effet n'est plus voulu : chaque écran affiche désormais son verset
+# complet, de façon propre et statique, pendant toute sa fenêtre audio — ce qui
+# est largement suffisant pour "coller" à la récitation puisque le texte
+# apparaît/disparaît exactement au bon moment (cf. fade in/out synchronisés sur
+# l'audio dans generate()). Supprimer ce sous-système élimine au passage une
+# dépendance lourde et fragile (téléchargement réseau d'un modèle + poids
+# GitHub à la première exécution), qui pouvait échouer ou ralentir un run.
 def _screen_char_weights(sub_parts):
     """
     Pour une ayah affichée sur plusieurs écrans (ex. Ayat Al-Kursi a→h), répartit
-    la durée audio totale entre les écrans proportionnellement au poids de
-    durée estimé de chacun (cf. _arabic_duration_weight, qui tient compte des
-    élongations/chadda plutôt qu'un simple compte de lettres). Beaucoup plus
-    simple et 100% robuste qu'un alignement mot-à-mot (segments CDN / Whisper) :
-    aucun appel réseau supplémentaire, aucun risque d'alignement raté, un
-    résultat toujours cohérent.
+    la durée audio totale entre les écrans proportionnellement à la longueur du
+    texte de chacun — un écran avec deux fois plus de mots reste affiché deux
+    fois plus longtemps. Beaucoup plus simple et 100% robuste qu'un alignement
+    mot-à-mot (segments CDN / Whisper) : aucun appel réseau supplémentaire,
+    aucun risque d'alignement raté, un résultat toujours cohérent.
     """
-    return [_arabic_duration_weight(v["ar"]) for v in sub_parts]
-
-def _detect_pause_times(audio_path, ad, noise_db=-30, min_silence=0.10):
-    """
-    🔧 FIX décalage karaoké (écrans multiples par ayah, ex. Ayat Al-Kursi a→h) :
-    détecte les VRAIES pauses de récitation (respiration entre clauses) dans
-    l'audio via ffmpeg silencedetect — aucune dépendance ML/réseau, fonctionne
-    même sur un runner CI sans GPU. Ces pauses servent ensuite à "aimanter"
-    les frontières entre écrans d'une même ayah sur de vrais points de
-    silence plutôt que sur une simple proportion de longueur de texte, qui
-    ignore les élongations (madd) et pauses (waqf) réelles de la récitation.
-    Retourne une liste de timestamps (s), un par silence détecté (milieu du
-    silence). Best-effort : liste vide si la détection échoue ou si l'audio
-    est trop court/propre pour révéler des pauses nettes.
-    """
-    try:
-        r = subprocess.run(
-            ["ffmpeg", "-i", str(audio_path), "-af",
-             f"silencedetect=noise={noise_db}dB:d={min_silence}",
-             "-f", "null", "-"],
-            capture_output=True, text=True, timeout=30
-        )
-        starts, ends = [], []
-        for line in r.stderr.splitlines():
-            if "silence_start:" in line:
-                try:
-                    starts.append(float(line.split("silence_start:")[1].strip().split()[0]))
-                except Exception:
-                    pass
-            elif "silence_end:" in line:
-                try:
-                    ends.append(float(line.split("silence_end:")[1].strip().split("|")[0]))
-                except Exception:
-                    pass
-        pauses = []
-        for s, e in zip(starts, ends):
-            if 0 < s < ad and 0 < e < ad and e > s:
-                pauses.append((s + e) / 2.0)
-        return sorted(pauses)
-    except Exception:
-        return []
+    def char_count(text):
+        return max(1, sum(1 for c in text if unicodedata.category(c).startswith("L")))
+    return [char_count(v["ar"]) for v in sub_parts]
 
 def select_verses(passage, reciter):
-    """v11 : TOUS les versets du passage. Chaque écran affiche son texte au
-    complet, de façon statique et propre (pas de surlignage mot-à-mot — cette
-    approche s'appuyait sur ctc-forced-aligner + torch, une dépendance lourde
-    et fragile en CI qui a été retirée : téléchargement d'un modèle ~1.2 Go à
-    chaque run, risque de timeout/échec sur un runner GitHub Actions).
-    Le texte apparaît/disparaît en fondu exactement au bon moment (calé sur
-    l'audio de CE verset), ce qui suffit à "coller" à la récitation.
+    """v10 : TOUS les versets du passage. Chaque écran affiche son texte au
+    complet, de façon statique et propre (plus de surlignage mot-à-mot) — le
+    texte apparaît en fondu dès que la récitation atteint son écran et
+    disparaît en fondu juste avant l'écran suivant, ce qui suffit à bien
+    "coller" à la récitation sans les fragilités d'un alignement mot-à-mot.
     Les sous-parties d'un même verset (même surah+ayah) partagent UN seul audio ;
     la durée totale de l'ayah est répartie entre ses écrans au prorata de la
-    longueur du texte (cf. _arabic_duration_weight), avec les frontières
-    aimantées sur les vraies pauses de récitation détectées via ffmpeg
-    (cf. _detect_pause_times) quand c'est possible — 100% local, aucune
-    dépendance réseau/modèle, résultat identique à chaque run.
+    longueur du texte de chacun (cf. _screen_char_weights).
     """
     sel, audios, aud_durs, frame_counts, word_windows = [], [], [], [], []
 
@@ -1931,11 +2054,10 @@ def select_verses(passage, reciter):
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         ayah_groups.setdefault(key, []).append(verse)
 
-    ayah_audio_cache    = {}  # (s,a,qid) → (audio_path, ad, weights, total_weight, pause_times)
+    ayah_audio_cache    = {}  # (s,a,qid) → (audio_path, ad, weights, total_weight)
     ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés par les sous-parties précédentes
     ayah_subpart_idx    = {}  # (s,a,qid) → index de la prochaine sous-partie dans ayah_groups[key]
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
-    ayah_last_end       = {}  # (s,a,qid) → fin (s) de la dernière fenêtre émise (chaîne les écrans sans trou/recouvrement)
 
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
@@ -1955,11 +2077,7 @@ def select_verses(passage, reciter):
                 )
             ad      = get_audio_dur(audio) if audio else 4.5
             weights = _screen_char_weights(ayah_groups[key])
-            # Pauses réelles détectées uniquement si l'ayah est répartie sur
-            # plusieurs écrans (sinon inutile) — best-effort, ~1s de calcul ffmpeg,
-            # 100% local (aucun réseau, aucun modèle).
-            pause_times = _detect_pause_times(audio, ad) if len(weights) > 1 else []
-            ayah_audio_cache[key]   = (audio, ad, weights, sum(weights), pause_times)
+            ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
             ayah_weight_before[key] = 0
             ayah_subpart_idx[key]   = 0
             n_screens = len(weights)
@@ -1967,38 +2085,18 @@ def select_verses(passage, reciter):
         else:
             print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
 
-        audio, ad, weights, total_weight, pause_times = ayah_audio_cache[key]
+        audio, ad, weights, total_weight = ayah_audio_cache[key]
         idx  = ayah_subpart_idx[key]
         w    = weights[idx]
         is_last_subpart = (idx == len(weights) - 1)
 
         # ── Fenêtre temporelle de cette sous-partie dans l'audio complet ──────
-        # window_start = où s'est arrêté l'écran précédent (valeur EXACTE) —
-        # jamais recalculé indépendamment, sinon un trou/recouvrement apparaît
-        # entre écrans.
         w_before     = ayah_weight_before[key]
-        window_start = ayah_last_end.get(key, 0.0)
-        raw_end      = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
-        window_end   = raw_end
-        if not is_last_subpart and pause_times:
-            # 🔧 FIX décalage karaoké multi-écrans : au lieu de couper au point
-            # proportionnel "brut" (qui ignore le rythme réel de la récitation),
-            # on aimante la coupure sur la pause de récitation détectée la plus
-            # proche — MAIS seulement si elle est raisonnablement proche de
-            # l'estimation proportionnelle (tolérance ~40% de la durée moyenne
-            # d'un écran), pour ne jamais sauter sur la mauvaise pause si le
-            # texte de cet écran est très déséquilibré par rapport aux autres.
-            avg_screen_dur = ad / max(1, len(weights))
-            tol = max(0.35, avg_screen_dur * 0.45)
-            candidates = [p for p in pause_times if p > window_start]
-            if candidates:
-                nearest = min(candidates, key=lambda p: abs(p - raw_end))
-                if abs(nearest - raw_end) <= tol:
-                    window_end = nearest
+        window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
+        window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
         window_start = max(0.0, min(window_start, ad))
         window_end   = max(window_start + 0.05, min(window_end, ad))
         window_dur   = window_end - window_start
-        ayah_last_end[key] = window_end
 
         ayah_weight_before[key] = w_before + w
         ayah_subpart_idx[key]   = idx + 1
@@ -2022,7 +2120,7 @@ def select_verses(passage, reciter):
         audios.append(audio)
         aud_durs.append(window_dur)
         frame_counts.append(n_audio_frames)
-        word_windows.append(None)  # conservé pour compat de signature ; plus de karaoké mot-à-mot
+        word_windows.append(None)  # 🔧 conservé pour compat de signature ; plus de karaoké mot-à-mot
 
     # Audio mixé : dédoublonner les fichiers audio (même ayah = même fichier complet)
     seen_audio = []
@@ -2030,7 +2128,7 @@ def select_verses(passage, reciter):
     for verse in sel:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         if key not in seen_keys:
-            audio, ad, _, _, _ = ayah_audio_cache[key]
+            audio, ad, _, _ = ayah_audio_cache[key]
             seen_audio.append((audio, ad))
             seen_keys.add(key)
 
@@ -2042,7 +2140,7 @@ def select_verses(passage, reciter):
     print(f"   Total : {len(sel)} écrans — {len(unique_audios)} ayat audio — {audio_dur:.1f}s audio — {total_dur:.1f}s vidéo")
     return sel, audios, aud_durs, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, word_windows
 
-def mix_audio(audio_list, dur_list, total_dur):
+def mix_audio(audio_list, dur_list, total_dur, lead_silence_dur=0.0, trail_silence_dur=0.0):
     """
     Concatène les fichiers audio avec un court silence BREATH entre chaque verset.
     Cela préserve le silence naturel entre les ayat, sans jamais couper la récitation.
@@ -2050,6 +2148,11 @@ def mix_audio(audio_list, dur_list, total_dur):
     IMPORTANT : audio_list contient déjà les audios DÉDOUBLONNÉS (un seul par ayah).
     On insère donc un silence entre chaque ayah — ce qui correspond exactement
     aux transitions breath visuelles entre ayat différentes.
+
+    lead_silence_dur / trail_silence_dur : silence ajouté avant/après TOUTE la
+    récitation, pour matcher exactement les frames vidéo silencieuses de la
+    carte d'accroche (hook) et de la carte de fin (CTA "follow"). Doit rester
+    en accord strict avec HOOK_FRAMES/OUTRO_FRAMES côté vidéo (cf. generate()).
     """
     # 🔧 FIX "verset sauté" / vidéo muette : auparavant, tout audio manquant
     # ici était silencieusement filtré (`valid = [... if a and Path(a).exists()]`),
@@ -2082,6 +2185,19 @@ def mix_audio(audio_list, dur_list, total_dur):
             "-t", str(BREATH_DUR), "-c:a", "aac", "-b:a", "192k", str(silence_path)
         ], capture_output=True)
     inputs, concat_parts, idx = [], [], 0
+    # Silence d'ouverture (carte hook)
+    lead_path = None
+    if lead_silence_dur > 0.01:
+        lead_path = OUT_DIR / "cache" / f"silence_lead_{round(lead_silence_dur,3)}.aac"
+        if not lead_path.exists():
+            subprocess.run([
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", str(lead_silence_dur), "-c:a", "aac", "-b:a", "192k", str(lead_path)
+            ], capture_output=True)
+        if lead_path.exists():
+            inputs += ["-i", str(lead_path)]
+            concat_parts.append(f"[{idx}:a]")
+            idx += 1
     for vi, (audio, _) in enumerate(valid):
         inputs += ["-i", str(audio)]
         concat_parts.append(f"[{idx}:a]")
@@ -2089,6 +2205,18 @@ def mix_audio(audio_list, dur_list, total_dur):
         # Silence UNIQUEMENT entre deux ayat successives (pas après la dernière)
         if vi < len(valid) - 1 and silence_path.exists():
             inputs += ["-i", str(silence_path)]
+            concat_parts.append(f"[{idx}:a]")
+            idx += 1
+    # Silence de fermeture (carte outro CTA)
+    if trail_silence_dur > 0.01:
+        trail_path = OUT_DIR / "cache" / f"silence_trail_{round(trail_silence_dur,3)}.aac"
+        if not trail_path.exists():
+            subprocess.run([
+                "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                "-t", str(trail_silence_dur), "-c:a", "aac", "-b:a", "192k", str(trail_path)
+            ], capture_output=True)
+        if trail_path.exists():
+            inputs += ["-i", str(trail_path)]
             concat_parts.append(f"[{idx}:a]")
             idx += 1
     n   = len(concat_parts)
@@ -2162,208 +2290,6 @@ def _select_passage_and_reciter(passage):
 MAX_GENERATE_ATTEMPTS = int(os.getenv("MAX_GENERATE_ATTEMPTS", "100000"))
 RETRY_PAUSE_S         = float(os.getenv("RETRY_PAUSE_S", "5"))
 
-# ═══════════════════════════════════════════════════════════════════════════
-# v11 : Troncature OPTIONNELLE à une durée cible + écrans hook/outro
-# ═══════════════════════════════════════════════════════════════════════════
-# 🔧 FIX "passages pas complets" : par défaut, DÉSACTIVÉE (0 = pas de limite).
-# Les passages jouent maintenant TOUJOURS en entier, du 1er au dernier verset.
-# Si tu veux réintroduire volontairement une limite de durée (ex. 35s pour
-# coller au format Shorts), définis la variable d'environnement
-# MAX_VIDEO_TARGET_S côté GitHub Actions — sinon rien n'est coupé.
-MAX_VIDEO_TARGET_S = float(os.getenv("MAX_VIDEO_TARGET_S", "0"))  # 0 = désactivé
-
-# 🔧 v12 : hook/outro en OVERLAY sur les frames déjà existantes du 1er/dernier
-# verset — zéro frame ajoutée, zéro silence audio à insérer. Avant, ces écrans
-# étaient des frames SUPPLÉMENTAIRES (donc de la durée en plus sans contenu
-# récité), ce qui dilue mécaniquement le taux de complétion (le ratio "temps
-# regardé / durée totale" — le signal de classement le plus lourd sur
-# YouTube Shorts). Là, le texte s'affiche PAR-DESSUS le tout début / la toute
-# fin du verset déjà en cours de lecture, en crossfade avec le texte du
-# verset lui-même — la durée totale de la vidéo ne change pas d'une frame.
-HOOK_OVERLAY_DUR_S  = 1.3   # durée d'affichage du hook (accroche) en overlay
-HOOK_XFADE_S        = 0.30  # durée du crossfade hook → texte du verset
-OUTRO_OVERLAY_DUR_S = 2.2   # durée d'affichage du CTA en overlay
-OUTRO_XFADE_S       = 0.45  # durée du crossfade texte du verset → CTA
-HOOK_OVERLAY_FRAMES_DEFAULT  = max(1, int(round(HOOK_OVERLAY_DUR_S * FPS)))
-HOOK_XFADE_FRAMES            = max(1, int(round(HOOK_XFADE_S * FPS)))
-OUTRO_OVERLAY_FRAMES_DEFAULT = max(1, int(round(OUTRO_OVERLAY_DUR_S * FPS)))
-OUTRO_XFADE_FRAMES           = max(1, int(round(OUTRO_XFADE_S * FPS)))
-
-# ── Banques de hooks (ouverture) et CTA (fin), sélectionnées par mots-clés du
-# thème du passage. Objectif : un vrai "scroll-stopper" dans la 1ère seconde
-# et un vrai déclencheur de commentaire/partage en fin de vidéo, plutôt que
-# la seule mention passive "Follow for daily reminders".
-THEME_HOOKS = {
-    ("patience", "hardship", "trial", "steadfast"): [
-        "This verse carries you through your hardest days",
-        "Read this before you give up",
-        "For when everything feels too heavy",
-    ],
-    ("hope", "never lose hope", "despair"): [
-        "Never lose hope — Allah says it Himself",
-        "This is for anyone about to give up",
-    ],
-    ("mercy", "forgiv"): [
-        "No matter what you've done, this is for you",
-        "Allah's mercy is bigger than your mistakes",
-    ],
-    ("gratitude", "blessing", "generosity"): [
-        "Read this and notice what you've been given",
-    ],
-    ("death", "hereafter", "judgment", "grave", "resurrection"): [
-        "A reminder none of us can escape",
-        "This life is not the final stop",
-    ],
-    ("dua", "supplication", "prayer of"): [
-        "A dua straight from the Quran",
-        "Say this when you don't know what to say",
-    ],
-    ("heart", "peace", "reassured", "steadfast heart"): [
-        "For the heart that feels restless",
-    ],
-    ("guidance", "light", "path", "straight path"): [
-        "Feeling lost? Start here",
-    ],
-    ("parent", "brotherhood", "family"): [
-        "A reminder every family needs to hear",
-    ],
-    ("trust", "reliance", "sufficient", "hasbunallah"): [
-        "Read this next time you feel like it's all on you",
-    ],
-}
-GENERIC_HOOKS = [
-    "One verse. Read it slowly.",
-    "This might be the reminder you needed today",
-    "Stop scrolling — read this first",
-    "Something to sit with today",
-    "A verse worth remembering",
-]
-
-THEME_CTAS = {
-    ("patience", "hardship", "trial", "steadfast"): "What's testing your patience right now?",
-    ("hope", "despair"): "What are you holding onto hope for?",
-    ("mercy", "forgiv"): "Who do you need to forgive today?",
-    ("gratitude", "blessing"): "What are you grateful for today?",
-    ("dua", "supplication"): "Save this dua for later",
-    ("parent", "brotherhood", "family"): "Tag someone who needs to see this",
-    ("guidance", "light", "path"): "Save this for when you feel lost",
-}
-GENERIC_CTAS = [
-    "Which verse spoke to you today?",
-    "Save this for when you need it",
-    "Share this with someone who needs it",
-]
-
-def _pick_by_theme(title, theme_bank, generic_bank):
-    t = title.lower()
-    matches = []
-    for keywords, val in theme_bank.items():
-        if any(k in t for k in keywords):
-            matches.append(val)
-    if matches:
-        chosen = RNG.choice(matches)
-        return RNG.choice(chosen) if isinstance(chosen, list) else chosen
-    chosen = RNG.choice(generic_bank)
-    return RNG.choice(chosen) if isinstance(chosen, list) else chosen
-
-def pick_hook(title):
-    return _pick_by_theme(title, THEME_HOOKS, GENERIC_HOOKS)
-
-def pick_cta(title):
-    return _pick_by_theme(title, THEME_CTAS, GENERIC_CTAS)
-
-def _trim_to_target_duration(verses, audios, aud_durs, frame_counts, word_windows,
-                              unique_audios, unique_durs, target_s=MAX_VIDEO_TARGET_S):
-    """Coupe le passage sur une frontière d'ayah ENTIÈRE (jamais en plein
-    milieu d'un verset) dès que la durée cumulée dépasserait target_s.
-    Garde toujours au moins 2 ayat même si la première dépasse déjà la cible,
-    pour ne jamais produire une vidéo à un seul verset.
-    target_s <= 0 → DÉSACTIVÉ, le passage joue toujours en entier."""
-    if target_s is None or target_s <= 0:
-        return verses, audios, aud_durs, frame_counts, word_windows, unique_audios, unique_durs
-    if not unique_durs:
-        return verses, audios, aud_durs, frame_counts, word_windows, unique_audios, unique_durs
-    cum, keep_ayat = 0.0, 0
-    for i, d in enumerate(unique_durs):
-        extra = d if i == 0 else d + BREATH_DUR
-        if cum + extra > target_s and keep_ayat >= 2:
-            break
-        cum += extra
-        keep_ayat += 1
-    if keep_ayat >= len(unique_durs):
-        return verses, audios, aud_durs, frame_counts, word_windows, unique_audios, unique_durs
-
-    keep_keys, order = set(), []
-    for v in verses:
-        key = (v["surah"], v["ayah"])
-        if key not in keep_keys:
-            if len(order) >= keep_ayat:
-                break
-            keep_keys.add(key)
-            order.append(key)
-
-    new_v, new_a, new_ad, new_fc, new_ww = [], [], [], [], []
-    for v, a, ad, fc, ww in zip(verses, audios, aud_durs, frame_counts, word_windows):
-        if (v["surah"], v["ayah"]) in keep_keys:
-            new_v.append(v); new_a.append(a); new_ad.append(ad); new_fc.append(fc); new_ww.append(ww)
-
-    print(f"   ✂️  Tronqué à {keep_ayat}/{len(unique_durs)} ayat pour rester sous ~{target_s:.0f}s")
-    return new_v, new_a, new_ad, new_fc, new_ww, unique_audios[:keep_ayat], unique_durs[:keep_ayat]
-
-def render_hook(base_img, hook_text, alpha_frac):
-    """Accroche affichée EN OVERLAY sur le tout début du 1er verset (pas un
-    écran séparé — cf. commentaire v12 plus haut). Voile quasi-noir (88%)
-    par-dessus l'image de fond déjà en cours de lecture : ça "lit" comme un
-    écran noir plein (rupture de contraste forte contre le feed), sans
-    ajouter la moindre frame à la vidéo."""
-    img = base_img.convert("RGBA")
-    ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d   = ImageDraw.Draw(ov, "RGBA")
-    f = fonts()
-    a = int(255 * max(0., min(1., alpha_frac)))
-    d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.88)))
-    words  = hook_text.split()
-    lines  = _wrap_words(words, f["title"], int(W * 0.82))
-    fh     = _line_h(f["title"]) + 10
-    y      = H // 2 - (len(lines) * fh) // 2
-    for line in lines:
-        text = " ".join(w for _, w, _ in line)
-        lw   = f["title"].getbbox(text)[2] - f["title"].getbbox(text)[0]
-        x    = W // 2 - lw // 2
-        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.5)))
-        d.text((x, y), text, font=f["title"], fill=(255, 250, 240, a))
-        y += fh
-    return Image.alpha_composite(img, ov).convert("RGB")
-
-def render_outro(base_img, cta_text, account, alpha_frac):
-    """Question d'engagement + compte, affichés EN OVERLAY sur la toute fin
-    du dernier verset (pas un écran séparé). Même voile quasi-noir que le
-    hook : signal visuel net de "fin de la récitation" sans ajouter la
-    moindre frame à la vidéo (donc sans diluer le taux de complétion)."""
-    img = base_img.convert("RGBA")
-    ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d   = ImageDraw.Draw(ov, "RGBA")
-    f = fonts()
-    a = int(255 * max(0., min(1., alpha_frac)))
-    d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.88)))
-    words = cta_text.split()
-    lines = _wrap_words(words, f["title"], int(W * 0.82))
-    fh    = _line_h(f["title"]) + 10
-    y     = H // 2 - 60 - (len(lines) * fh) // 2
-    for line in lines:
-        text = " ".join(w for _, w, _ in line)
-        lw   = f["title"].getbbox(text)[2] - f["title"].getbbox(text)[0]
-        x    = W // 2 - lw // 2
-        d.text((x + 2, y + 3), text, font=f["title"], fill=(0, 0, 0, int(a * 0.5)))
-        d.text((x, y), text, font=f["title"], fill=(255, 215, 80, a))
-        y += fh
-    w_ = f["small"].getbbox(account)[2] - f["small"].getbbox(account)[0]
-    x_ = W // 2 - w_ // 2
-    ay = y + 20
-    d.text((x_ + 2, ay + 3), account, font=f["small"], fill=(0, 0, 0, int(a * 0.5)))
-    d.text((x_, ay), account, font=f["small"], fill=(255, 255, 255, int(a * 0.85)))
-    return Image.alpha_composite(img, ov).convert("RGB")
-
 def generate(passage_idx=None):
     if passage_idx is not None:
         # Appel ciblé sur un passage précis (ex: tests manuels) : on essaie
@@ -2402,9 +2328,6 @@ def generate(passage_idx=None):
                 time.sleep(RETRY_PAUSE_S)
         verses, audios, aud_durs, total_dur, audio_dur, unique_audios, unique_durs, frame_counts, word_windows, reciter = picked
 
-    verses, audios, aud_durs, frame_counts, word_windows, unique_audios, unique_durs = \
-        _trim_to_target_duration(verses, audios, aud_durs, frame_counts, word_windows, unique_audios, unique_durs)
-
     n = len(verses)
     if n == 0:
         print("❌ Aucun verset disponible")
@@ -2425,15 +2348,28 @@ def generate(passage_idx=None):
     # C'est aussi le nombre de silences audio insérés par mix_audio (len(unique_audios) - 1)
     # Les deux DOIVENT être identiques pour éviter tout désalignement audio/vidéo.
     n_breaths = len(unique_audios) - 1  # ← aligné sur mix_audio
-    total_frames  = sum(frame_counts) + breath_frames * n_breaths
+    total_frames  = HOOK_FRAMES + sum(frame_counts) + breath_frames * n_breaths + OUTRO_FRAMES
     total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
 
-    # 🔧 v12 : plus d'écrans hook/outro séparés — le texte s'affiche en overlay
-    # sur le tout début du 1er verset / la toute fin du dernier (cf. boucle
-    # ci-dessous), donc aucune frame supplémentaire ici.
-    hook_text = pick_hook(passage["title"])
-    cta_text  = pick_cta(passage["title"])
+    # ── Carte d'accroche (hook) — avant le premier verset ────────────────────
+    hook_text  = RNG.choice(HOOK_LINES)
+    hook_fade  = max(1, int(HOOK_FRAMES * 0.28))
+    hook_scene = scenes[0][0]
+    hook_kb    = p["kb"][0]
+    for fi in range(HOOK_FRAMES):
+        t_h = fi / max(1, HOOK_FRAMES)
+        frame = ken_burns(hook_scene, t_h, **hook_kb)
+        if fi < hook_fade:
+            ha = fi / hook_fade
+        elif fi > HOOK_FRAMES - hook_fade:
+            ha = (HOOK_FRAMES - fi) / hook_fade
+        else:
+            ha = 1.0
+        frame = render_hook_card(frame, hook_text, max(0., ha))
+        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+        gi += 1
+    print(f"  Accroche « {hook_text} » OK")
 
     for vi in range(n):
         verse   = verses[vi]
@@ -2443,38 +2379,12 @@ def generate(passage_idx=None):
         n_audio_frames = frame_counts[vi]
         ww_v    = word_windows[vi]   # timing réel des mots pour cet écran, ou None (repli heuristique)
         # Frames pendant la récitation (son actif)
-        # 🔧 FIX "versets défilent mal / pas carré" : fade_in/fade_out étaient
-        # des durées FIXES (0.55s / 0.45s) indépendantes de la durée réelle du
-        # verset. Pour un verset court (~1s, ex. un seul mot comme "الرَّحْمَٰنُ"),
-        # fade_in+fade_out pouvait manger LA TOTALITÉ de l'écran — le texte
-        # n'avait quasiment aucune fenêtre stable à pleine opacité et
-        # "flashait" au lieu de s'afficher proprement. On plafonne maintenant
-        # chaque fondu à 25% du verset, ce qui garantit toujours au moins 50%
-        # de la durée en palier stable et lisible, quelle que soit la longueur
-        # du verset.
-        desired_fade_in  = max(1, int(FPS * (0.15 if vi == 0 else 0.55)))
-        desired_fade_out = max(1, int(FPS * 0.45))
-        quarter  = max(1, n_audio_frames // 4)
-        fade_in  = max(1, min(desired_fade_in, quarter))
-        fade_out = max(1, min(desired_fade_out, quarter))
+        fade_in  = max(1, int(FPS * 0.55))
+        fade_out = max(1, int(FPS * 0.45))
         next_sc  = scenes[vi+1][0] if vi < n-1 else None
         next_kb  = p["kb"][vi+1]   if vi < n-1 else None
         n_words  = len(verse["ar"].split())
         print("Verset " + str(vi+1) + "/" + str(n) + " — " + verse["ref"] + " — " + str(n_words) + " mots")
-
-        # ── Fenêtres d'overlay hook/CTA pour CE verset (0 si non concerné) ────
-        # Budget partagé si un même verset est à la fois le 1er ET le dernier
-        # (passage à un seul verset) : on ne laisse jamais hook+outro manger
-        # plus des 2/3 de l'écran, pour que le verset reste lisible.
-        is_first, is_last = (vi == 0), (vi == n - 1)
-        budget = n_audio_frames if not (is_first and is_last) else (2 * n_audio_frames) // 3
-        cap     = int(n_audio_frames * 0.6)  # jamais plus de 60% du verset pour un seul overlay
-        hook_n  = min(HOOK_OVERLAY_FRAMES_DEFAULT, cap, max(0, budget // (2 if (is_first and is_last) else 1))) if is_first else 0
-        outro_n = min(OUTRO_OVERLAY_FRAMES_DEFAULT, cap, max(0, budget // (2 if (is_first and is_last) else 1))) if is_last else 0
-        hook_n  = min(hook_n, max(0, n_audio_frames - HOOK_XFADE_FRAMES))
-        outro_n = min(outro_n, max(0, n_audio_frames - OUTRO_XFADE_FRAMES))
-        outro_start = n_audio_frames - outro_n
-
         # ── Calculé ICI (avant la boucle) pour piloter à la fois le crossfade
         # d'image de fin de sous-partie ci-dessous ET les frames BREATH plus bas.
         next_is_new_ayah = (vi < n - 1 and
@@ -2503,44 +2413,14 @@ def generate(passage_idx=None):
                 frame = Image.blend(frame_cur, frame_next, cross_t)
             else:
                 frame = ken_burns(sc_img, t_seg, **kb)
-            # Alpha texte : fade-in en début, fade-out en fin (comportement
-            # par défaut, remplacé ci-dessous sur les fenêtres hook/outro)
+            # Alpha texte : fade-in en début, fade-out en fin
             if fi < fade_in:
                 ta = fi / fade_in
             elif fi > n_audio_frames - fade_out:
                 ta = (n_audio_frames - fi) / max(1, fade_out)
             else:
                 ta = 1.0
-
-            # ── Overlay hook (1er verset uniquement, tout début) ─────────────
-            # Le texte du verset reste invisible tant que le hook est plein
-            # écran, puis les deux se croisent en fondu sur HOOK_XFADE_FRAMES.
-            hook_a = 0.0
-            if hook_n > 0 and fi < hook_n:
-                pop_in      = min(6, hook_n)
-                xfade_start = max(0, hook_n - HOOK_XFADE_FRAMES)
-                if fi < pop_in:
-                    hook_a = fi / pop_in
-                elif fi >= xfade_start:
-                    hook_a = max(0.0, (hook_n - fi) / max(1, HOOK_XFADE_FRAMES))
-                else:
-                    hook_a = 1.0
-                ta = 0.0 if fi < xfade_start else min(ta, (fi - xfade_start + 1) / max(1, HOOK_XFADE_FRAMES))
-
-            # ── Overlay CTA (dernier verset uniquement, toute fin) ───────────
-            # Le CTA monte en fondu pendant que le texte du verset s'efface,
-            # puis reste affiché jusqu'à la toute dernière frame de la vidéo.
-            outro_a = 0.0
-            if outro_n > 0 and fi >= outro_start:
-                rel = fi - outro_start
-                outro_a = rel / OUTRO_XFADE_FRAMES if rel < OUTRO_XFADE_FRAMES else 1.0
-                ta = min(ta, max(0.0, 1.0 - outro_a))
-
             frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), vi+1, n, progress=t_seg, word_windows=ww_v)
-            if hook_a > 0.01:
-                frame = render_hook(frame, hook_text, hook_a)
-            if outro_a > 0.01:
-                frame = render_outro(frame, cta_text, ACCOUNT, outro_a)
             frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
             gi += 1
         # ── Frames BREATH : crossfade IMAGE seulement, texte invisible ────────
@@ -2560,9 +2440,27 @@ def generate(passage_idx=None):
                 gi += 1
         print(f"  Verset {vi+1} OK")
 
+    # ── Carte de fermeture (outro CTA) — après le dernier verset ─────────────
+    outro_scene = scenes[-1][0]
+    outro_kb    = p["kb"][-1]
+    outro_fade  = max(1, int(OUTRO_FRAMES * 0.22))
+    for fi in range(OUTRO_FRAMES):
+        t_o = fi / max(1, OUTRO_FRAMES)
+        frame = ken_burns(outro_scene, t_o, **outro_kb)
+        if fi < outro_fade:
+            oa = fi / outro_fade
+        elif fi > OUTRO_FRAMES - outro_fade:
+            oa = (OUTRO_FRAMES - fi) / outro_fade
+        else:
+            oa = 1.0
+        frame = render_outro_card(frame, reciter, max(0., oa))
+        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+        gi += 1
+    print(f"  Outro CTA OK")
+
     print(f"{gi} frames rendues")
-    total_dur = gi / FPS   # 🔧 recalculé une dernière fois depuis le nombre réel de frames
-    audio_track = mix_audio(unique_audios, unique_durs, audio_dur)
+    audio_track = mix_audio(unique_audios, unique_durs, audio_dur,
+                             lead_silence_dur=HOOK_AUDIO_DUR, trail_silence_dur=OUTRO_AUDIO_DUR)
     if not audio_track or not Path(audio_track).exists():
         # 🔧 FIX vidéo muette : ne jamais encoder sans piste audio valide.
         raise AudioMissingError("Piste audio mixée introuvable après mix_audio() — abandon plutôt que vidéo muette.")
