@@ -2172,17 +2172,22 @@ RETRY_PAUSE_S         = float(os.getenv("RETRY_PAUSE_S", "5"))
 # MAX_VIDEO_TARGET_S côté GitHub Actions — sinon rien n'est coupé.
 MAX_VIDEO_TARGET_S = float(os.getenv("MAX_VIDEO_TARGET_S", "0"))  # 0 = désactivé
 
-# 🔧 Durées VERROUILLÉES sur un nombre de frames entier (même principe que
-# BREATH_FRAMES/BREATH_DUR) : la durée du silence audio ajoutée (padding en fin,
-# silence en début) est dérivée du nombre de frames vidéo réellement rendues,
-# jamais l'inverse — ça garantit zéro dérive audio/vidéo sur ces écrans,
-# exactement la même classe de bug que le fix karaoké breath plus haut.
-HOOK_DUR_S     = 2.0
-HOOK_FRAMES    = int(round(HOOK_DUR_S * FPS))
-HOOK_DUR       = HOOK_FRAMES / FPS
-OUTRO_DUR_S    = 2.6
-OUTRO_FRAMES   = int(round(OUTRO_DUR_S * FPS))
-OUTRO_DUR      = OUTRO_FRAMES / FPS
+# 🔧 v12 : hook/outro en OVERLAY sur les frames déjà existantes du 1er/dernier
+# verset — zéro frame ajoutée, zéro silence audio à insérer. Avant, ces écrans
+# étaient des frames SUPPLÉMENTAIRES (donc de la durée en plus sans contenu
+# récité), ce qui dilue mécaniquement le taux de complétion (le ratio "temps
+# regardé / durée totale" — le signal de classement le plus lourd sur
+# YouTube Shorts). Là, le texte s'affiche PAR-DESSUS le tout début / la toute
+# fin du verset déjà en cours de lecture, en crossfade avec le texte du
+# verset lui-même — la durée totale de la vidéo ne change pas d'une frame.
+HOOK_OVERLAY_DUR_S  = 1.3   # durée d'affichage du hook (accroche) en overlay
+HOOK_XFADE_S        = 0.30  # durée du crossfade hook → texte du verset
+OUTRO_OVERLAY_DUR_S = 2.2   # durée d'affichage du CTA en overlay
+OUTRO_XFADE_S       = 0.45  # durée du crossfade texte du verset → CTA
+HOOK_OVERLAY_FRAMES_DEFAULT  = max(1, int(round(HOOK_OVERLAY_DUR_S * FPS)))
+HOOK_XFADE_FRAMES            = max(1, int(round(HOOK_XFADE_S * FPS)))
+OUTRO_OVERLAY_FRAMES_DEFAULT = max(1, int(round(OUTRO_OVERLAY_DUR_S * FPS)))
+OUTRO_XFADE_FRAMES           = max(1, int(round(OUTRO_XFADE_S * FPS)))
 
 # ── Banques de hooks (ouverture) et CTA (fin), sélectionnées par mots-clés du
 # thème du passage. Objectif : un vrai "scroll-stopper" dans la 1ère seconde
@@ -2305,18 +2310,18 @@ def _trim_to_target_duration(verses, audios, aud_durs, frame_counts, word_window
     print(f"   ✂️  Tronqué à {keep_ayat}/{len(unique_durs)} ayat pour rester sous ~{target_s:.0f}s")
     return new_v, new_a, new_ad, new_fc, new_ww, unique_audios[:keep_ayat], unique_durs[:keep_ayat]
 
-def render_hook(hook_text, alpha_frac):
-    """Écran d'ouverture (~2s) : accroche courte affichée AVANT le premier
-    verset, pour arrêter le scroll dans la première seconde. Fond NOIR plein
-    (pas la photo du verset) : rupture de contraste forte contre le feed —
-    un carré noir avec du texte blanc "casse" visuellement le défilement de
-    miniatures colorées bien mieux qu'une photo, et signale clairement
-    "contenu différent" avant que la récitation ne commence."""
-    img = Image.new("RGB", (W, H), (0, 0, 0)).convert("RGBA")
+def render_hook(base_img, hook_text, alpha_frac):
+    """Accroche affichée EN OVERLAY sur le tout début du 1er verset (pas un
+    écran séparé — cf. commentaire v12 plus haut). Voile quasi-noir (88%)
+    par-dessus l'image de fond déjà en cours de lecture : ça "lit" comme un
+    écran noir plein (rupture de contraste forte contre le feed), sans
+    ajouter la moindre frame à la vidéo."""
+    img = base_img.convert("RGBA")
     ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(ov, "RGBA")
     f = fonts()
     a = int(255 * max(0., min(1., alpha_frac)))
+    d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.88)))
     words  = hook_text.split()
     lines  = _wrap_words(words, f["title"], int(W * 0.82))
     fh     = _line_h(f["title"]) + 10
@@ -2330,16 +2335,17 @@ def render_hook(hook_text, alpha_frac):
         y += fh
     return Image.alpha_composite(img, ov).convert("RGB")
 
-def render_outro(cta_text, account, alpha_frac):
-    """Écran final (~2.6s) : question d'engagement (commentaires/partages) +
-    rappel du compte, sur fond NOIR plein — même logique que le hook : un
-    signal visuel fort et net de "fin de la récitation", qui laisse le temps
-    de lire et d'agir (commenter/suivre) sans la distraction du fond photo."""
-    img = Image.new("RGB", (W, H), (0, 0, 0)).convert("RGBA")
+def render_outro(base_img, cta_text, account, alpha_frac):
+    """Question d'engagement + compte, affichés EN OVERLAY sur la toute fin
+    du dernier verset (pas un écran séparé). Même voile quasi-noir que le
+    hook : signal visuel net de "fin de la récitation" sans ajouter la
+    moindre frame à la vidéo (donc sans diluer le taux de complétion)."""
+    img = base_img.convert("RGBA")
     ov  = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d   = ImageDraw.Draw(ov, "RGBA")
     f = fonts()
     a = int(255 * max(0., min(1., alpha_frac)))
+    d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(a * 0.88)))
     words = cta_text.split()
     lines = _wrap_words(words, f["title"], int(W * 0.82))
     fh    = _line_h(f["title"]) + 10
@@ -2357,39 +2363,6 @@ def render_outro(cta_text, account, alpha_frac):
     d.text((x_ + 2, ay + 3), account, font=f["small"], fill=(0, 0, 0, int(a * 0.5)))
     d.text((x_, ay), account, font=f["small"], fill=(255, 255, 255, int(a * 0.85)))
     return Image.alpha_composite(img, ov).convert("RGB")
-
-def _pad_audio_silence(audio_path, pad_s, out_path):
-    """Rallonge la piste audio mixée d'un silence de pad_s secondes EN FIN,
-    pour qu'elle couvre les frames de l'écran outro (sinon ffmpeg -shortest
-    coupe l'outro visuellement). pad_s doit venir d'un nombre de frames
-    verrouillé (OUTRO_DUR), jamais d'une durée brute arrondie séparément."""
-    r = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(audio_path), "-af", f"apad=pad_dur={pad_s}",
-         "-c:a", "aac", "-b:a", "192k", str(out_path)],
-        capture_output=True
-    )
-    return out_path if r.returncode == 0 else audio_path
-
-def _prepend_audio_silence(audio_path, pad_s, out_path):
-    """Insère pad_s secondes de silence AVANT la piste audio mixée, pour
-    couvrir l'écran hook ajouté avant le premier verset. Même principe de
-    verrouillage que _pad_audio_silence (pad_s doit venir de HOOK_DUR)."""
-    silence_path = OUT_DIR / "cache" / f"silence_hook_{round(pad_s,3)}.aac"
-    if not silence_path.exists():
-        subprocess.run(
-            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-             "-t", str(pad_s), "-c:a", "aac", "-b:a", "192k", str(silence_path)],
-            capture_output=True
-        )
-    if not silence_path.exists():
-        return audio_path
-    r = subprocess.run(
-        ["ffmpeg", "-y", "-i", str(silence_path), "-i", str(audio_path),
-         "-filter_complex", "[0:a][1:a]concat=n=2:v=0:a=1[aout]",
-         "-map", "[aout]", "-c:a", "aac", "-b:a", "192k", str(out_path)],
-        capture_output=True
-    )
-    return out_path if r.returncode == 0 else audio_path
 
 def generate(passage_idx=None):
     if passage_idx is not None:
@@ -2456,20 +2429,11 @@ def generate(passage_idx=None):
     total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
 
-    # ── Écran hook (accroche ~2s) AVANT le premier verset — scroll-stopper.
-    # Fond NOIR plein (cf. render_hook) : rupture de contraste contre le feed.
-    # gi part de 0 ici ; la boucle des versets continue ensuite le compteur,
-    # donc l'audio doit être précédé d'un silence de durée HOOK_DUR
-    # (verrouillée sur HOOK_FRAMES) pour rester calé — voir _prepend_audio_silence.
+    # 🔧 v12 : plus d'écrans hook/outro séparés — le texte s'affiche en overlay
+    # sur le tout début du 1er verset / la toute fin du dernier (cf. boucle
+    # ci-dessous), donc aucune frame supplémentaire ici.
     hook_text = pick_hook(passage["title"])
-    hook_fade = max(1, int(HOOK_FRAMES * 0.2))
-    for hi in range(HOOK_FRAMES):
-        ha_in  = hi / hook_fade
-        ha_out = (HOOK_FRAMES - 1 - hi) / hook_fade
-        ha     = max(0.0, min(1.0, ha_in, ha_out))
-        frame = render_hook(hook_text, ha)
-        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
-        gi += 1
+    cta_text  = pick_cta(passage["title"])
 
     for vi in range(n):
         verse   = verses[vi]
@@ -2485,6 +2449,20 @@ def generate(passage_idx=None):
         next_kb  = p["kb"][vi+1]   if vi < n-1 else None
         n_words  = len(verse["ar"].split())
         print("Verset " + str(vi+1) + "/" + str(n) + " — " + verse["ref"] + " — " + str(n_words) + " mots")
+
+        # ── Fenêtres d'overlay hook/CTA pour CE verset (0 si non concerné) ────
+        # Budget partagé si un même verset est à la fois le 1er ET le dernier
+        # (passage à un seul verset) : on ne laisse jamais hook+outro manger
+        # plus des 2/3 de l'écran, pour que le verset reste lisible.
+        is_first, is_last = (vi == 0), (vi == n - 1)
+        budget = n_audio_frames if not (is_first and is_last) else (2 * n_audio_frames) // 3
+        cap     = int(n_audio_frames * 0.6)  # jamais plus de 60% du verset pour un seul overlay
+        hook_n  = min(HOOK_OVERLAY_FRAMES_DEFAULT, cap, max(0, budget // (2 if (is_first and is_last) else 1))) if is_first else 0
+        outro_n = min(OUTRO_OVERLAY_FRAMES_DEFAULT, cap, max(0, budget // (2 if (is_first and is_last) else 1))) if is_last else 0
+        hook_n  = min(hook_n, max(0, n_audio_frames - HOOK_XFADE_FRAMES))
+        outro_n = min(outro_n, max(0, n_audio_frames - OUTRO_XFADE_FRAMES))
+        outro_start = n_audio_frames - outro_n
+
         # ── Calculé ICI (avant la boucle) pour piloter à la fois le crossfade
         # d'image de fin de sous-partie ci-dessous ET les frames BREATH plus bas.
         next_is_new_ayah = (vi < n - 1 and
@@ -2513,14 +2491,44 @@ def generate(passage_idx=None):
                 frame = Image.blend(frame_cur, frame_next, cross_t)
             else:
                 frame = ken_burns(sc_img, t_seg, **kb)
-            # Alpha texte : fade-in en début, fade-out en fin
+            # Alpha texte : fade-in en début, fade-out en fin (comportement
+            # par défaut, remplacé ci-dessous sur les fenêtres hook/outro)
             if fi < fade_in:
                 ta = fi / fade_in
             elif fi > n_audio_frames - fade_out:
                 ta = (n_audio_frames - fi) / max(1, fade_out)
             else:
                 ta = 1.0
+
+            # ── Overlay hook (1er verset uniquement, tout début) ─────────────
+            # Le texte du verset reste invisible tant que le hook est plein
+            # écran, puis les deux se croisent en fondu sur HOOK_XFADE_FRAMES.
+            hook_a = 0.0
+            if hook_n > 0 and fi < hook_n:
+                pop_in      = min(6, hook_n)
+                xfade_start = max(0, hook_n - HOOK_XFADE_FRAMES)
+                if fi < pop_in:
+                    hook_a = fi / pop_in
+                elif fi >= xfade_start:
+                    hook_a = max(0.0, (hook_n - fi) / max(1, HOOK_XFADE_FRAMES))
+                else:
+                    hook_a = 1.0
+                ta = 0.0 if fi < xfade_start else min(ta, (fi - xfade_start + 1) / max(1, HOOK_XFADE_FRAMES))
+
+            # ── Overlay CTA (dernier verset uniquement, toute fin) ───────────
+            # Le CTA monte en fondu pendant que le texte du verset s'efface,
+            # puis reste affiché jusqu'à la toute dernière frame de la vidéo.
+            outro_a = 0.0
+            if outro_n > 0 and fi >= outro_start:
+                rel = fi - outro_start
+                outro_a = rel / OUTRO_XFADE_FRAMES if rel < OUTRO_XFADE_FRAMES else 1.0
+                ta = min(ta, max(0.0, 1.0 - outro_a))
+
             frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), vi+1, n, progress=t_seg, word_windows=ww_v)
+            if hook_a > 0.01:
+                frame = render_hook(frame, hook_text, hook_a)
+            if outro_a > 0.01:
+                frame = render_outro(frame, cta_text, ACCOUNT, outro_a)
             frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
             gi += 1
         # ── Frames BREATH : crossfade IMAGE seulement, texte invisible ────────
@@ -2540,28 +2548,12 @@ def generate(passage_idx=None):
                 gi += 1
         print(f"  Verset {vi+1} OK")
 
-    # ── Écran outro : fond NOIR plein (cf. render_outro), avec une question
-    # d'engagement liée au thème (déclencheur de commentaire/partage) + le
-    # compte. Ces frames n'ont pas de son propre — c'est le silence de padding
-    # audio ajouté plus bas qui les couvre.
-    cta_text     = pick_cta(passage["title"])
-    outro_fade   = max(1, int(OUTRO_FRAMES * 0.2))
-    for oi in range(OUTRO_FRAMES):
-        oa_in  = oi / outro_fade
-        oa_out = (OUTRO_FRAMES - 1 - oi) / outro_fade
-        oa     = max(0.0, min(1.0, oa_in, oa_out))
-        frame = render_outro(cta_text, ACCOUNT, oa)
-        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
-        gi += 1
-
     print(f"{gi} frames rendues")
-    total_dur = gi / FPS   # 🔧 recalculé une dernière fois pour inclure les frames hook + outro
+    total_dur = gi / FPS   # 🔧 recalculé une dernière fois depuis le nombre réel de frames
     audio_track = mix_audio(unique_audios, unique_durs, audio_dur)
     if not audio_track or not Path(audio_track).exists():
         # 🔧 FIX vidéo muette : ne jamais encoder sans piste audio valide.
         raise AudioMissingError("Piste audio mixée introuvable après mix_audio() — abandon plutôt que vidéo muette.")
-    audio_track = _pad_audio_silence(audio_track, OUTRO_DUR, OUT_DIR / "cache" / "audio_padded.aac")
-    audio_track = _prepend_audio_silence(audio_track, HOOK_DUR, OUT_DIR / "cache" / "audio_hooked.aac")
     today = datetime.date.today().strftime("%Y%m%d")
     out   = OUT_DIR / f"quran_{today}_s{RUN_SEED%99999:05d}.mp4"
     print(f"Encodage...")
