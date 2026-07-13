@@ -13,6 +13,37 @@ def _ensure_installed():
     amiri_path = "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Regular.ttf"
     if not os.path.exists(amiri_path):
         subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-hosny-amiri"], check=True)
+    # 🔧 FIX traduction invisible : les polices utilisées pour l'ANGLAIS (titre,
+    # traduction, référence, accroche) n'étaient JAMAIS explicitement installées
+    # — contrairement à Amiri pour l'arabe (garanti ci-dessus). Sur une machine
+    # où fonts-liberation / fonts-freefont-ttf ne sont pas déjà présents (image
+    # Ubuntu minimale, environnement Colab frais...), _load_font() retombait
+    # SILENCIEUSEMENT sur ImageFont.load_default() — une police bitmap minuscule
+    # qui ignore complètement la taille demandée. Résultat : la traduction
+    # anglaise était techniquement dessinée, mais à une taille quasi invisible.
+    # On garantit maintenant ces polices exactement comme Amiri (bloquant, avec
+    # secours DejaVu en toute fin de liste dans fonts() de toute façon).
+    liberation_path = "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"
+    if not os.path.exists(liberation_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-liberation"],
+                            check=True, timeout=120)
+        except Exception:
+            pass  # non-bloquant : FreeSerif/DejaVu prennent le relais (voir fonts())
+    freefont_path = "/usr/share/fonts/truetype/freefont/FreeSerifItalic.ttf"
+    if not os.path.exists(freefont_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-freefont-ttf"],
+                            check=True, timeout=120)
+        except Exception:
+            pass  # non-bloquant : DejaVu (quasi toujours présent) prend le relais
+    dejavu_path = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf"
+    if not os.path.exists(dejavu_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-dejavu-core"],
+                            check=True, timeout=120)
+        except Exception:
+            pass
     # 🖋 Police coranique plus soignée (Scheherazade New — style Uthmani, très
     # lisible, largement utilisée par les apps de lecture du Coran). Best-effort :
     # si le paquet n'existe pas sur ce système, on continue avec Amiri (déjà bien).
@@ -1410,22 +1441,23 @@ PHOTOS = [
     ("https://images.unsplash.com/photo-1503756234508-e32369269ddb?w=1080&h=1920&fit=crop&crop=center", "turquoise_lake"),
 ]
 
-def _load_font(paths, size):
+def _load_font(paths, size, label=""):
     for p in paths:
         try:
-            # 🖋 Layout RAQM (harfbuzz+fribidi, inclus dans les wheels Pillow
-            # récentes) : indispensable pour un rendu arabe VRAIMENT propre —
-            # jonction correcte des lettres, positionnement des diacritiques
-            # (tashkeel), formes contextuelles. Sans ça, PIL peut afficher les
-            # lettres isolées/mal jointes. Repli silencieux sur le layout basique
-            # si raqm n'est pas disponible sur la machine.
             try:
-                return ImageFont.truetype(p, size, layout_engine=ImageFont.Layout.RAQM)
+                f = ImageFont.truetype(p, size, layout_engine=ImageFont.Layout.RAQM)
             except Exception:
-                return ImageFont.truetype(p, size)
+                f = ImageFont.truetype(p, size)
+            print(f"   🖋 Police '{label}' ({size}px) : {p}")
+            return f
         except:
             pass
-    return ImageFont.load_default()
+    print(f"   ⚠ Police '{label}' ({size}px) : AUCUN chemin trouvé — repli sur la police "
+          f"par défaut de Pillow (texte potentiellement minuscule/illisible).")
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 _FONTS_CACHE = None
 
@@ -1442,22 +1474,24 @@ def fonts():
         IT = [
             "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSerifItalic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",  # 🔧 quasi toujours présent
         ]
         RG = [
             "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",  # 🔧 quasi toujours présent
         ]
         _FONTS_CACHE = {
             # 🔧 FIX esthétique : l'arabe était trop grand (96) et prenait toute
             # la place, repoussant/masquant la traduction anglaise. Réduit à 80
             # + interlignes resserrés (voir draw_arabic_text) pour un bloc plus
             # compact — et l'anglais est agrandi (62→68) pour être bien visible.
-            "ar":      _load_font(AR, 80),
-            "en":      _load_font(IT, 68),
-            "ref":     _load_font(RG, 42),
-            "small":   _load_font(RG, 30),
-            "title":   _load_font(IT, 42),
-            "hook":    _load_font(IT, 72),
+            "ar":      _load_font(AR, 80, "ar"),
+            "en":      _load_font(IT, 68, "en"),
+            "ref":     _load_font(RG, 42, "ref"),
+            "small":   _load_font(RG, 30, "small"),
+            "title":   _load_font(IT, 42, "title"),
+            "hook":    _load_font(IT, 72, "hook"),
         }
     return _FONTS_CACHE
 
