@@ -118,7 +118,14 @@ FPS       = 24
 # l'ajout de nouvelles ayat s'arrête toujours à une frontière d'ayah.
 # Réglable via la variable d'environnement MAX_TOTAL_DUR_S (défaut 25s).
 MAX_TOTAL_DUR = float(os.getenv("MAX_TOTAL_DUR_S", "25"))
-BREATH    = 0.40   # Silence naturel entre versets (respecte le rythme de la récitation)
+BREATH    = float(os.getenv("BREATH_S", "0"))
+# 🔧 FIX "récitation coupée" : un silence de 0.40s était inséré entre CHAQUE
+# verset, ce qui — combiné aux versets manquants corrigés par
+# _split_passages_on_gaps() ci-dessous — donnait l'impression d'un montage
+# haché plutôt que d'une récitation continue. Par défaut, plus AUCUN silence
+# artificiel n'est inséré entre deux ayat consécutives : l'audio d'un verset
+# s'enchaîne directement sur le suivant. Réglable via BREATH_S si un léger
+# souffle est préféré (ex: BREATH_S=0.15), mais 0 par défaut = continu.
 # 🔧 FIX karaoké parfait : le nombre de frames vidéo du breath (BREATH_FRAMES) et la
 # durée AUDIO du silence inséré entre versets DOIVENT être calculés depuis la MÊME
 # source. Avant : breath_frames = int(BREATH*FPS) = 9 frames (0.375s vidéo) alors que
@@ -1335,12 +1342,53 @@ def _build_passages_from_api(curated, target_total):
     print(f"   ✅ {len(extra)} passages additionnels générés depuis l'API officielle")
     return extra
 
+def _split_passages_on_gaps(passages):
+    """🔧 FIX "récitation qui saute" : certains passages curatés (et, en théorie,
+    des blocs générés depuis l'API) enchaînent des versets qui NE SE SUIVENT PAS
+    (ex: 49:10 puis 49:13 — les ayat 11 et 12 manquent). À l'écran, ça sonne
+    comme une récitation coupée/montée alors que le but est un enchaînement
+    naturel. On ne perd aucun contenu : on découpe chaque passage en
+    sous-passages qui ne contiennent QUE des ayat consécutives de la MÊME
+    sourate (une même ayah répétée pour un sous-découpage d'affichage, ex.
+    "2:255a"/"2:255b", compte comme consécutive — ce n'est pas un saut).
+    Résultat : chaque vidéo générée récite un bloc ininterrompu, jamais un
+    montage avec des versets manquants au milieu.
+    """
+    result = []
+    for p in passages:
+        verses = p["verses"]
+        if not verses:
+            continue
+        chunks = [[verses[0]]]
+        for prev, cur in zip(verses, verses[1:]):
+            same_surah  = prev["surah"] == cur["surah"]
+            contiguous  = same_surah and (cur["ayah"] == prev["ayah"] or cur["ayah"] == prev["ayah"] + 1)
+            if contiguous:
+                chunks[-1].append(cur)
+            else:
+                chunks.append([cur])
+        if len(chunks) == 1:
+            result.append({"title": p["title"], "verses": chunks[0]})
+        else:
+            for i, ch in enumerate(chunks):
+                result.append({"title": f"{p['title']} ({i+1}/{len(chunks)})", "verses": ch})
+    return result
+
 try:
-    PASSAGES = CURATED_PASSAGES + _build_passages_from_api(CURATED_PASSAGES, TARGET_PASSAGE_CNT)
+    _extra = _build_passages_from_api(CURATED_PASSAGES, TARGET_PASSAGE_CNT)
 except Exception as e:
     print(f"   ⚠ Extension des passages échouée ({e}) — on continue avec les {len(CURATED_PASSAGES)} passages curatés.")
-    PASSAGES = CURATED_PASSAGES
-print(f"   📚 {len(PASSAGES)} passages disponibles au total ({len(CURATED_PASSAGES)} curatés + {len(PASSAGES) - len(CURATED_PASSAGES)} générés)")
+    _extra = []
+_n_curated_before = len(CURATED_PASSAGES)
+_n_extra_before   = len(_extra)
+PASSAGES = _split_passages_on_gaps(CURATED_PASSAGES + _extra)
+_n_after_split = len(PASSAGES) - (_n_curated_before + _n_extra_before)
+if _n_after_split > 0:
+    print(f"   ✂️  {_n_after_split} passage(s) supplémentaire(s) créé(s) en séparant des "
+          f"versets non consécutifs (aucune récitation ne saute plus d'ayah désormais).")
+print(f"   📚 {len(PASSAGES)} passages disponibles au total "
+      f"({_n_curated_before} curatés + {_n_extra_before} générés, "
+      f"{len(PASSAGES)} après découpage anti-saut)")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # RECITATEURS — 21 récitateurs de qualité
@@ -2419,9 +2467,12 @@ def mix_audio(audio_list, dur_list, total_dur, lead_silence_dur=0.0, trail_silen
     valid = list(zip(audio_list, dur_list))
     if not valid:
         raise AudioMissingError("mix_audio: aucun audio à mixer.")
-    # Générer un fichier silence .aac de BREATH secondes
+    # Générer un fichier silence .aac de BREATH secondes (seulement si un souffle
+    # est réellement configuré — BREATH_S=0 par défaut désormais, voir plus haut :
+    # aucun fichier de silence n'est créé ni inséré, la récitation s'enchaîne
+    # directement d'un verset au suivant, sans coupure).
     silence_path = OUT_DIR / "cache" / "silence_breath.aac"
-    if not silence_path.exists():
+    if BREATH_DUR > 0.01 and not silence_path.exists():
         # 🔧 FIX : durée du silence = BREATH_DUR (verrouillée sur breath_frames vidéo),
         # pas BREATH brut — garantit zéro dérive audio/vidéo sur les transitions.
         subprocess.run([
@@ -2447,8 +2498,9 @@ def mix_audio(audio_list, dur_list, total_dur, lead_silence_dur=0.0, trail_silen
         inputs += ["-i", str(audio)]
         concat_parts.append(f"[{idx}:a]")
         idx += 1
-        # Silence UNIQUEMENT entre deux ayat successives (pas après la dernière)
-        if vi < len(valid) - 1 and silence_path.exists():
+        # Silence UNIQUEMENT entre deux ayat successives (pas après la dernière),
+        # et seulement si BREATH_DUR > 0 — sinon on enchaîne directement, continu.
+        if vi < len(valid) - 1 and BREATH_DUR > 0.01 and silence_path.exists():
             inputs += ["-i", str(silence_path)]
             concat_parts.append(f"[{idx}:a]")
             idx += 1
