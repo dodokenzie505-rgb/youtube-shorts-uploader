@@ -1280,7 +1280,23 @@ def _build_passages_from_api(curated, target_total):
         print(f"   ⚠ Impossible de joindre l'API Quran.com ({e}) — extension annulée, on garde les {len(curated)} passages curatés.")
         return []
 
-    CHUNK_SIZE = 7  # ~7 ayat par écran-passage, cohérent avec le style des passages curatés
+    # 🎯 Découpage en blocs VISANT ~25s au lieu d'un nombre fixe d'ayat.
+    # Avant : CHUNK_SIZE=7 ayat, quel que soit leur longueur — sur des sourates
+    # à ayat très courtes (ex: Al-Falaq, An-Nas), 7 ayat ne totalisent parfois
+    # que 8-10s de récitation, donnant des vidéos bien en-deçà de MAX_TOTAL_DUR
+    # (25s par défaut) → moins de temps de visionnage utile pour l'algo. À
+    # l'inverse, sur des ayat très longues, 7 ayat peuvent largement dépasser
+    # 25s (le troncage runtime s'en charge, mais on perd le contrôle du
+    # découpage éditorial). On accumule maintenant les ayat dans un bloc
+    # jusqu'à approcher le budget de récitation cible, en estimant la durée
+    # par un nombre de mots arabes (heuristique grossière — le rythme réel
+    # dépend du récitateur choisi plus tard ; le troncage précis à l'audio
+    # réel reste de toute façon géré au moment de generate()).
+    SEC_PER_WORD_EST    = 0.55  # récitation murattal modérée, mots arabes
+    TARGET_RECITATION_S = max(5.0, MAX_TOTAL_DUR - HOOK_DUR - OUTRO_DUR - 1.0)  # marge de 1s
+    MIN_AYAT_PER_BLOCK   = 3     # jamais un bloc d'1-2 ayat isolées (trop court, haché)
+    MAX_AYAT_PER_BLOCK   = 14    # garde-fou haut (sourates à ayat très courtes)
+
     for ch in chapters:
         if len(extra) >= need:
             break
@@ -1288,7 +1304,7 @@ def _build_passages_from_api(curated, target_total):
         vcount = ch.get("verses_count", 0)
         name_en = ch.get("translated_name", {}).get("name") or ch.get("name_simple", f"Surah {cid}")
         name_simple = ch.get("name_simple", f"Surah {cid}")
-        if cid in covered_surahs and vcount <= CHUNK_SIZE:
+        if cid in covered_surahs and vcount <= MIN_AYAT_PER_BLOCK:
             # Petite sourate déjà entièrement couverte par les passages curatés : on saute.
             continue
         try:
@@ -1298,12 +1314,29 @@ def _build_passages_from_api(curated, target_total):
             continue
         if not verses_raw:
             continue
-        # Découpage en blocs de CHUNK_SIZE ayat (la dernière sourate déjà entière
-        # si elle tient en un seul bloc, sinon plusieurs écrans successifs).
-        for start in range(0, len(verses_raw), CHUNK_SIZE):
+        # Découpage en blocs visant TARGET_RECITATION_S de récitation estimée
+        # (la dernière sourate déjà entière si elle tient en un seul bloc,
+        # sinon plusieurs écrans successifs).
+        start = 0
+        while start < len(verses_raw):
             if len(extra) >= need:
                 break
-            block = verses_raw[start:start + CHUNK_SIZE]
+            block, est_dur = [], 0.0
+            i = start
+            while i < len(verses_raw):
+                v = verses_raw[i]
+                n_words = len(v.get("text_uthmani", "").split())
+                v_est   = n_words * SEC_PER_WORD_EST
+                # On ajoute toujours au moins MIN_AYAT_PER_BLOCK ayat, puis on
+                # s'arrête dès que le budget cible est atteint (sans dépasser
+                # MAX_AYAT_PER_BLOCK) — on ajoute l'ayah qui fait franchir le
+                # seuil (mieux vaut légèrement dépasser 25s, tronqué ensuite
+                # au runtime, que s'arrêter trop court).
+                block.append(v)
+                est_dur += v_est
+                i += 1
+                if len(block) >= MIN_AYAT_PER_BLOCK and (est_dur >= TARGET_RECITATION_S or len(block) >= MAX_AYAT_PER_BLOCK):
+                    break
             verses_out = []
             for v in block:
                 ayah_num = v.get("verse_number")
@@ -1326,13 +1359,15 @@ def _build_passages_from_api(curated, target_total):
                     "ref": f"{cid}:{ayah_num}", "surah": cid, "ayah": ayah_num,
                 })
             if not verses_out:
+                start = i
                 continue
-            if len(block) < CHUNK_SIZE:
+            if block[0].get('verse_number') == block[-1].get('verse_number'):
                 title = f"{name_en} — {name_simple} (complète)" if start == 0 else f"{name_en} — {name_simple} (suite)"
             else:
                 rng = f"{block[0].get('verse_number')}-{block[-1].get('verse_number')}"
                 title = f"{name_en} — {name_simple} {rng}"
             extra.append({"title": title, "verses": verses_out})
+            start = i
         print(f"      Sourate {cid} ({name_simple}) traitée — total additionnel: {len(extra)}/{need}")
 
     try:
