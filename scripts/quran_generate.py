@@ -8,6 +8,18 @@ from pathlib import Path
 # Installation des dépendances système si nécessaire
 def _ensure_installed():
     import shutil
+    # 🔧 FIX : sur une image fraîche (Colab neuf, conteneur Docker minimal...) le
+    # cache apt local peut être vide/périmé, ce qui fait échouer TOUT
+    # 'apt-get install' avec "Unable to locate package" — y compris les
+    # installations censées corriger la traduction invisible plus bas, dont les
+    # erreurs sont avalées silencieusement (try/except: pass). Un simple
+    # 'apt-get update' préalable (best-effort, jamais bloquant) réduit
+    # nettement ce risque avant tout install.
+    try:
+        subprocess.run(["sudo", "apt-get", "update", "-y", "-q"],
+                        check=False, timeout=60, capture_output=True)
+    except Exception:
+        pass
     if not shutil.which("ffmpeg"):
         subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "ffmpeg"], check=True)
     amiri_path = "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Regular.ttf"
@@ -1448,18 +1460,86 @@ def _load_font(paths, size, label=""):
                 f = ImageFont.truetype(p, size, layout_engine=ImageFont.Layout.RAQM)
             except Exception:
                 f = ImageFont.truetype(p, size)
+            # 🔧 FIX traduction invisible : ImageFont.truetype() peut réussir à
+            # OUVRIR un fichier corrompu/tronqué (ex: install apt interrompue,
+            # téléchargement coupé) sans lever d'exception, puis produire un
+            # texte quasi invisible au rendu. On vérifie donc que la police
+            # chargée produit bien une hauteur de texte cohérente avec la
+            # taille demandée avant de l'accepter — sinon on continue d'essayer
+            # les chemins suivants au lieu de garder une police cassée.
+            bb = f.getbbox("Hgjy")
+            real_h = bb[3] - bb[1]
+            if real_h < size * 0.3:
+                print(f"   ⚠ Police '{label}' ({size}px) : {p} — rendu suspect "
+                      f"(hauteur {real_h}px pour {size}px demandés), essai suivant.")
+                continue
             print(f"   🖋 Police '{label}' ({size}px) : {p}")
             return f
-        except:
-            pass
-    print(f"   ⚠ Police '{label}' ({size}px) : AUCUN chemin trouvé — repli sur la police "
-          f"par défaut de Pillow (texte potentiellement minuscule/illisible).")
+        except Exception as e:
+            print(f"   ⚠ Police '{label}' ({size}px) : {p} — échec ({type(e).__name__}: {e}).")
+    # 🔧 Dernier recours : le Pillow moderne (≥10.1) fournit via load_default(size=…)
+    # une VRAIE police vectorielle (Aileron) qui respecte la taille demandée — ce
+    # n'est plus la minuscule police bitmap fixe des anciennes versions. On la
+    # vérifie quand même avec la même garde-fou, au cas où Pillow serait trop
+    # ancien pour honorer size= (TypeError → bitmap fixe, alors réellement illisible).
+    print(f"   ⚠ Police '{label}' ({size}px) : AUCUN chemin système/téléchargé valide — "
+          f"repli sur la police par défaut de Pillow.")
     try:
-        return ImageFont.load_default(size=size)
+        f = ImageFont.load_default(size=size)
+        bb = f.getbbox("Hgjy")
+        real_h = bb[3] - bb[1]
+        if real_h < size * 0.3:
+            print(f"   ❌ Police '{label}' : même le repli Pillow est minuscule "
+                  f"({real_h}px pour {size}px) — Pillow est probablement trop ancien "
+                  f"(pip install -U Pillow recommandé). Le texte '{label}' risque "
+                  f"d'être illisible dans la vidéo.")
+        return f
     except TypeError:
+        print(f"   ❌ Police '{label}' : Pillow trop ancien pour load_default(size=...) — "
+              f"repli sur la police bitmap fixe (texte '{label}' illisible probable). "
+              f"pip install -U Pillow corrigerait ceci.")
         return ImageFont.load_default()
 
 _FONTS_CACHE = None
+
+def _ensure_web_font(url, cache_name):
+    """🔧 FIX DÉFINITIF traduction invisible : les paquets apt (fonts-liberation,
+    fonts-freefont-ttf, fonts-dejavu-core) sont installés en best-effort dans
+    _ensure_installed() — SANS 'apt-get update' préalable, et toute erreur y est
+    silencieusement avalée (try/except: pass). Sur beaucoup d'environnements
+    (Colab frais, image Docker minimale, cache apt périmé, droits sudo restreints,
+    nom de paquet différent selon la distro...) ces installs peuvent TOUS échouer
+    en silence alors que ffmpeg/Amiri (bloquants, check=True) passent — laissant
+    l'anglais retomber sur ImageFont.load_default(), invisible ou minuscule selon
+    la version de Pillow installée.
+    Ce filet de sécurité ne dépend NI de sudo NI d'apt : un simple téléchargement
+    HTTP direct (le réseau est de toute façon indispensable au script pour
+    l'audio/les images), mis en cache une fois pour toutes comme les photos.
+    Retourne un chemin de fichier local utilisable par ImageFont.truetype, ou
+    None si même ça échoue (repli sur la chaîne apt existante puis load_default).
+    """
+    path = OUT_DIR / "cache" / cache_name
+    if path.exists() and path.stat().st_size > 10_000:
+        return str(path)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read()
+        if len(data) < 10_000:
+            raise ValueError(f"réponse suspecte ({len(data)} octets, attendu >10ko)")
+        path.write_bytes(data)
+        print(f"   🖋 Police de secours téléchargée : {cache_name} ({len(data)//1024} Ko)")
+        return str(path)
+    except Exception as e:
+        print(f"   ⚠ Téléchargement police de secours '{cache_name}' échoué (non bloquant) : {e}")
+        return None
+
+# Sources Google Fonts (dépôt officiel, brut GitHub — stable, pas d'auth requise).
+# Noto Serif : élégant, lisible, licence OFL. Utilisée UNIQUEMENT en toute dernière
+# position dans les listes ci-dessous — les polices système déjà installées par
+# _ensure_installed() restent toujours prioritaires quand elles sont disponibles.
+_WEBFONT_IT_URL = "https://github.com/google/fonts/raw/main/ofl/notoserif/NotoSerif-Italic.ttf"
+_WEBFONT_RG_URL = "https://github.com/google/fonts/raw/main/ofl/notoserif/NotoSerif-Regular.ttf"
 
 def fonts():
     global _FONTS_CACHE
@@ -1481,6 +1561,15 @@ def fonts():
             "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",  # 🔧 quasi toujours présent
         ]
+        # 🔧 Filet de sécurité final AVANT load_default() : si aucune police système
+        # n'est trouvée (voir _ensure_web_font ci-dessus), on télécharge une police
+        # garantie plutôt que de risquer une traduction minuscule/invisible.
+        _web_it = _ensure_web_font(_WEBFONT_IT_URL, "font_en_italic.ttf")
+        if _web_it:
+            IT.append(_web_it)
+        _web_rg = _ensure_web_font(_WEBFONT_RG_URL, "font_en_regular.ttf")
+        if _web_rg:
+            RG.append(_web_rg)
         _FONTS_CACHE = {
             # 🔧 FIX esthétique : l'arabe était trop grand (96) et prenait toute
             # la place, repoussant/masquant la traduction anglaise. Réduit à 80
@@ -1740,6 +1829,21 @@ HOOK_LINES = [
     "This is for the ones still holding on",
     "Somebody needed to hear this today",
     "When you don't know what to say to Allah...",
+    "Stop scrolling for 15 seconds",
+    "This might be the reminder you prayed for",
+    "If today has been hard...",
+    "Allah sees what you're carrying",
+    "You weren't meant to see this by accident",
+    "For the nights you can't sleep",
+    "When you feel like giving up...",
+    "This is your sign to keep going",
+    "If no one's checked on you today —",
+    "A verse for the heavy hearts",
+    "Before you close the app...",
+    "When your dua feels unanswered...",
+    "This is for you, right now",
+    "If you're overthinking everything today...",
+    "Read slowly. This is for you.",
 ]
 HOOK_DUR      = 1.4
 HOOK_FRAMES   = int(round(HOOK_DUR * FPS))
@@ -1747,6 +1851,27 @@ HOOK_AUDIO_DUR = HOOK_FRAMES / FPS   # 🔧 verrouillé sur le nb de frames rée
 OUTRO_DUR     = 2.0
 OUTRO_FRAMES  = int(round(OUTRO_DUR * FPS))
 OUTRO_AUDIO_DUR = OUTRO_FRAMES / FPS
+
+HOOK_HISTORY_FILE = OUT_DIR / "cache" / "recent_hooks.json"
+HOOK_HISTORY_KEEP = max(1, len(HOOK_LINES) // 2)  # exclut la moitié la plus récente
+
+def _pick_hook():
+    """Choisit une accroche d'ouverture en évitant celles utilisées le plus
+    récemment (persisté entre les runs — voir commentaire d'appel)."""
+    recent = []
+    try:
+        if HOOK_HISTORY_FILE.exists():
+            recent = json.loads(HOOK_HISTORY_FILE.read_text())
+    except Exception:
+        recent = []
+    candidates = [h for h in HOOK_LINES if h not in recent] or list(HOOK_LINES)
+    choice = RNG.choice(candidates)
+    recent = ([choice] + [h for h in recent if h != choice])[:HOOK_HISTORY_KEEP]
+    try:
+        HOOK_HISTORY_FILE.write_text(json.dumps(recent, ensure_ascii=False))
+    except Exception:
+        pass  # non-bloquant : au pire on perd juste la mémoire de rotation
+    return choice
 
 def _decorative_band(d, band_y, a, half_w=None):
     """Bande dorée-émeraude + étoile islamique — factorisée pour être réutilisée
@@ -2473,7 +2598,13 @@ def generate(passage_idx=None):
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
 
     # ── Carte d'accroche (hook) — avant le premier verset ────────────────────
-    hook_text  = RNG.choice(HOOK_LINES)
+    # 🔧 Variété garantie entre runs : RNG.choice() seul peut retomber sur la
+    # même accroche que la veille (pur hasard, ~1 chance sur 25) — chaque run
+    # étant un process séparé (cron/daily_upload.py), aucune mémoire n'existait
+    # entre deux exécutions. On mémorise maintenant les dernières accroches
+    # utilisées (fichier cache, comme les passages/images) et on exclut la
+    # moitié la plus récente de la liste des choix, pour forcer la rotation.
+    hook_text = _pick_hook()
     hook_fade  = max(1, int(HOOK_FRAMES * 0.28))
     hook_scene = scenes[0][0]
     hook_kb    = p["kb"][0]
