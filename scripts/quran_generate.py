@@ -61,20 +61,20 @@ import urllib.request
 
 W, H      = 1080, 1920
 FPS       = 24
-# 🎯 PLAFOND DE DURÉE (rétention Shorts) : v7 ne coupait JAMAIS un passage, ce
-# qui pouvait produire des vidéos de plusieurs minutes — mauvais pour le taux
-# de complétion, le signal le plus important pour la distribution algorithmique
-# des Shorts. On plafonne maintenant la durée de RÉCITATION cumulée (hors
-# hook/outro/breath) ; l'ajout de nouvelles ayat s'arrête dès que ce seuil est
-# atteint, TOUJOURS à une frontière d'ayah — un audio en cours n'est jamais
-# coupé. Réglable via la variable d'environnement MAX_RECITATION_DUR_S.
-# 🔧 FIX copyright (durée) : les vidéos plus longues (7 versets d'affilée,
-# ~40-90s d'audio d'un même récitateur) dépassaient le seuil de durée autorisé
-# par certains ayants droit en Content ID → blocage mondial automatique. Les
-# anciennes vidéos courtes de l'utilisateur (~25s) n'avaient jamais ce
-# problème. On vise donc ~20s de récitation cumulée (+ hook/outro/breath
-# ≈ 4-5s), soit ~25s au total — aligné sur le format qui a toujours fonctionné.
-MAX_RECITATION_DUR = float(os.getenv("MAX_RECITATION_DUR_S", "20"))
+# 🎯 PLAFOND DE DURÉE TOTALE — copyright : certains ayants droit bloquent
+# (Content ID, monde entier) toute vidéo dépassant un certain seuil de durée
+# pour un même récitateur. On plafonne donc désormais la DURÉE TOTALE DE LA
+# VIDÉO (hook + récitation + silences + outro compris), jamais seulement la
+# récitation brute — c'est la durée totale qui compte pour les ayants droit.
+# 🔧 FIX : l'ancienne version acceptait TOUJOURS au moins 1 ayah même si elle
+# dépassait le plafond à elle seule, ce qui pouvait produire une vidéo trop
+# longue → blocage copyright. Maintenant, si même le premier verset d'un
+# passage dépasse le budget total à lui seul, ce passage est abandonné
+# ENTIÈREMENT (on essaie un autre passage/récitateur plus court) plutôt que de
+# risquer de dépasser la limite — et on ne coupe jamais un audio en cours :
+# l'ajout de nouvelles ayat s'arrête toujours à une frontière d'ayah.
+# Réglable via la variable d'environnement MAX_TOTAL_DUR_S (défaut 25s).
+MAX_TOTAL_DUR = float(os.getenv("MAX_TOTAL_DUR_S", "25"))
 BREATH    = 0.40   # Silence naturel entre versets (respecte le rythme de la récitation)
 # 🔧 FIX karaoké parfait : le nombre de frames vidéo du breath (BREATH_FRAMES) et la
 # durée AUDIO du silence inséré entre versets DOIVENT être calculés depuis la MÊME
@@ -1471,16 +1471,17 @@ def _line_h(font):
     bb = font.getbbox("ابجد")
     return bb[3] - bb[1]
 
-def _wrap_words(words, font, max_w):
+def _wrap_words(words, font, max_w, gap=None):
+    g = WORD_GAP if gap is None else gap
     lines, cur, cur_w = [], [], 0
     for i, w in enumerate(words):
         ww = _word_w(font, w)
-        if cur and cur_w + WORD_GAP + ww > max_w:
+        if cur and cur_w + g + ww > max_w:
             lines.append(cur)
             cur, cur_w = [(i, w, ww)], ww
         else:
             cur.append((i, w, ww))
-            cur_w = (cur_w + WORD_GAP + ww) if len(cur) > 1 else ww
+            cur_w = (cur_w + g + ww) if len(cur) > 1 else ww
     if cur:
         lines.append(cur)
     return lines
@@ -1745,10 +1746,18 @@ def render_hook_card(base_img, hook_text, alpha_frac):
     a   = int(255 * af)
     dy_anim = int((1 - _ease_inout(af)) * 14)
 
+    # 🔧 FIX « lignes mélangées » : le hook réutilisait le WORD_GAP global (20px)
+    # et un interligne serré — à 72px de police ça donnait un bloc dense où les
+    # mots et les 2 lignes se touchaient visuellement. On force ici un espacement
+    # bien plus large ENTRE LES MOTS (HOOK_GAP) et un vrai espace vertical entre
+    # les lignes, quitte à wrapper sur plus de lignes courtes plutôt qu'un
+    # paquet compact de mots collés.
+    HOOK_GAP = 46
     words = hook_text.split()
-    lines = _wrap_words(words, f["hook"], 900)
+    lines = _wrap_words(words, f["hook"], 760, gap=HOOK_GAP)
     fh    = _line_h(f["hook"]) + 10
-    block_h = len(lines) * (fh + 22)
+    line_step = fh + 46   # grand espace vertical net entre les lignes
+    block_h = len(lines) * line_step
     mid   = H // 2 + dy_anim
     panel_top    = mid - block_h // 2 - 110
     panel_bottom = mid + block_h // 2 + 110
@@ -1761,14 +1770,14 @@ def render_hook_card(base_img, hook_text, alpha_frac):
 
     y = mid - block_h // 2
     for line in lines:
-        line_w = sum(_word_w(f["hook"], w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
+        line_w = sum(_word_w(f["hook"], w) for _, w, _ in line) + HOOK_GAP * (len(line) - 1)
         x = W // 2 - line_w // 2
         for _, w, ww in line:
             for dx, dy in [(-2,-2),(2,-2),(-2,2),(2,2),(0,3)]:
                 d.text((x+dx, y+dy), w, font=f["hook"], fill=(0, 0, 0, min(a, 140)))
             d.text((x, y), w, font=f["hook"], fill=(255, 255, 255, a))
-            x += ww + WORD_GAP
-        y += fh + 22
+            x += ww + HOOK_GAP
+        y += line_step
 
     return Image.alpha_composite(img, ov).convert("RGB")
 
@@ -2104,14 +2113,16 @@ def select_verses(passage, reciter):
         ref = verse.get("ref") or f"{verse['surah']}:{verse['ayah']}"
 
         if key not in ayah_audio_cache:
-            # 🎯 PLAFOND DE DURÉE — rétention Shorts : une vidéo qui traîne perd
-            # son taux de complétion (le signal n°1 pour l'algorithme), donc on
-            # arrête d'ajouter de NOUVELLES ayat dès qu'on dépasse MAX_RECITATION_DUR,
-            # toujours à une frontière d'ayah (jamais en coupant un audio en cours).
-            # On garde toujours au moins 1 ayah, même si elle dépasse déjà le plafond
-            # à elle seule (mieux vaut une vidéo un peu longue qu'un passage vide).
-            if sel and cum_recitation_dur >= MAX_RECITATION_DUR:
-                break
+            n_ayat_so_far = len(ayah_audio_cache)
+            # 🎯 Vérif rapide AVANT téléchargement : s'il n'y a déjà plus de place
+            # pour une ayah de plus (même minimale), on s'arrête ici — toujours à
+            # une frontière d'ayah, jamais en coupant un audio en cours. On ne
+            # télécharge donc même pas l'audio suivant (inutile).
+            if n_ayat_so_far > 0:
+                room_before = (MAX_TOTAL_DUR - HOOK_AUDIO_DUR - OUTRO_AUDIO_DUR
+                               - cum_recitation_dur - BREATH_DUR * n_ayat_so_far)
+                if room_before <= 0:
+                    break
             # Première sous-partie de cette ayah : télécharger l'audio
             audio = dl_audio(verse, reciter)
             # 🔧 FIX zéro-décalage / passage complet : si l'audio est introuvable,
@@ -2123,7 +2134,26 @@ def select_verses(passage, reciter):
                     f"Audio introuvable pour {ref} avec le récitateur "
                     f"{reciter.get('name', '?')} — passage abandonné pour garantir 0 décalage."
                 )
-            ad      = get_audio_dur(audio) if audio else 4.5
+            ad = get_audio_dur(audio)
+            # 🔒 GARDE-FOU COPYRIGHT — durée totale (hook+outro+récitation+breaths)
+            # jamais coupée en plein verset : soit cette ayah tient dans le budget
+            # et on l'ajoute, soit elle n'y tient pas et :
+            #   • s'il n'y a AUCUNE ayah encore retenue (tout premier verset du
+            #     passage), ce passage est structurellement trop long à lui seul
+            #     avec ce récitateur → on l'ABANDONNE ENTIÈREMENT (une autre
+            #     tentative choisira un passage plus court, jamais de coupure) ;
+            #   • sinon, on s'arrête simplement ICI, à la frontière d'ayah, sans
+            #     ajouter celle-ci — la vidéo reste sous le plafond.
+            prospective_total = (HOOK_AUDIO_DUR + OUTRO_AUDIO_DUR + cum_recitation_dur
+                                  + ad + BREATH_DUR * n_ayat_so_far)
+            if prospective_total > MAX_TOTAL_DUR:
+                if n_ayat_so_far == 0:
+                    raise AudioMissingError(
+                        f"Ayah {ref} dure {ad:.1f}s à elle seule et dépasserait déjà "
+                        f"le plafond total de {MAX_TOTAL_DUR:.0f}s (hook+outro compris) — "
+                        f"passage trop long, abandonné pour éviter un dépassement copyright."
+                    )
+                break
             cum_recitation_dur += ad
             weights = _screen_char_weights(ayah_groups[key])
             ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
