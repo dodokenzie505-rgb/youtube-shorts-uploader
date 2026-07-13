@@ -1840,6 +1840,13 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     en_h          = en_n_lines * 84   # 🔧 espacement de ligne anglaise, aligné sur le "ly += 84" plus bas
     block_h   = ar_est_h + 30 + 56 + 40 + en_h   # 🔧 +40 (était 24) : marge nette entre l'arabe et la traduction
     ar_top    = H // 2 - block_h // 2 + 20 + dy_anim
+    # 🔒 Garde-fou : quelle que soit la longueur du verset (arabe+traduction),
+    # on s'assure que le bas du bloc (dernière ligne de traduction) reste bien
+    # visible à l'écran, avec une marge de sécurité — au lieu de laisser un
+    # verset exceptionnellement long pousser la traduction hors cadre.
+    max_ar_top = H - 170 - (block_h - 20)  # garde ~170px de marge basse
+    ar_top     = min(ar_top, max_ar_top)
+    ar_top     = max(ar_top, 60)  # et ne remonte jamais au-dessus du haut de l'écran
     mid       = H // 2 + dy_anim
 
     # ── 1. Fond dégradé central — vignette plus dramatique + teinte bleue-nuit
@@ -1891,7 +1898,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     # ── 4. Verset arabe — surlignage karaoké suivant la récitation ──────────
     ar_h = draw_arabic_text(
         d, verse["ar"], f["ar"],
-        cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=32,
+        cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=20,
         progress=progress, word_windows=word_windows
     )
 
