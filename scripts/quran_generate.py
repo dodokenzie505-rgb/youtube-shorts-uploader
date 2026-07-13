@@ -118,14 +118,25 @@ FPS       = 24
 # l'ajout de nouvelles ayat s'arrête toujours à une frontière d'ayah.
 # Réglable via la variable d'environnement MAX_TOTAL_DUR_S (défaut 25s).
 MAX_TOTAL_DUR = float(os.getenv("MAX_TOTAL_DUR_S", "25"))
-BREATH    = float(os.getenv("BREATH_S", "0"))
-# 🔧 FIX "récitation coupée" : un silence de 0.40s était inséré entre CHAQUE
-# verset, ce qui — combiné aux versets manquants corrigés par
+BREATH    = float(os.getenv("BREATH_S", "0.18"))
+# 🔧 FIX "récitation coupée" (v1) : un silence de 0.40s était inséré entre
+# CHAQUE verset, ce qui — combiné aux versets manquants corrigés par
 # _split_passages_on_gaps() ci-dessous — donnait l'impression d'un montage
-# haché plutôt que d'une récitation continue. Par défaut, plus AUCUN silence
-# artificiel n'est inséré entre deux ayat consécutives : l'audio d'un verset
-# s'enchaîne directement sur le suivant. Réglable via BREATH_S si un léger
-# souffle est préféré (ex: BREATH_S=0.15), mais 0 par défaut = continu.
+# haché plutôt que d'une récitation continue. On était alors passé à 0s par
+# défaut (aucun silence du tout).
+# 🔧 FIX "respiration coupée" (v2) : 0s, c'est TROP peu — ça ne laisse
+# littéralement aucun temps au récitateur pour respirer entre deux ayat,
+# ce qui sonne artificiel/essoufflé plutôt que naturel. On revient à un
+# court souffle de 0.18s par défaut (nettement moins que les 0.40s d'origine
+# qui, eux, cassaient la continuité) — un compromis entre "montage haché"
+# (trop long) et "respiration coupée" (trop court). Uniquement entre deux
+# AYAT DIFFÉRENTES (jamais entre sous-parties d'une même ayah, qui restent
+# calées sur le découpage proportionnel de l'audio réel — voir
+# select_verses()/_screen_char_weights) : le défilement à l'écran continue
+# donc de suivre exactement la récitation, ce souffle ne fait qu'ajouter une
+# respiration entre deux ayat, sans toucher au timing à l'intérieur d'une
+# ayah. Réglable via BREATH_S (ex: BREATH_S=0 pour revenir à zéro souffle,
+# BREATH_S=0.3 pour un souffle plus marqué).
 # 🔧 FIX karaoké parfait : le nombre de frames vidéo du breath (BREATH_FRAMES) et la
 # durée AUDIO du silence inséré entre versets DOIVENT être calculés depuis la MÊME
 # source. Avant : breath_frames = int(BREATH*FPS) = 9 frames (0.375s vidéo) alors que
