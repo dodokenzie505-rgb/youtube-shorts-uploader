@@ -2609,7 +2609,8 @@ def select_verses(passage, reciter):
     for verse in sel:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         if key not in seen_keys:
-            audio, ad, _, _ = ayah_audio_cache[key]
+            c = ayah_audio_cache[key]
+            audio, ad = c["audio"], c["ad"]
             seen_audio.append((audio, ad))
             seen_keys.add(key)
 
