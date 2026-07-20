@@ -1721,38 +1721,68 @@ ACCENT       = (61, 153, 112)    # accent principal (bande, séparateur, dots)
 ACCENT_BRIGHT= (163, 235, 197)   # menthe claire (accents vifs : dot actif, losange, référence)
 ACCENT_TITLE = (214, 242, 226)   # menthe-crème pâle (titre du passage)
 
-def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, **_unused):
+def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, progress=None, word_windows=None, **_unused):
     """
-    Affiche le verset arabe en entier, de façon propre et statique — une seule
-    couleur chaude et lisible pour tout le verset, avec une ombre portée pour
-    le détacher du fond et une très légère lueur dorée pour le côté soigné.
-    Pas de surlignage mot-à-mot : c'est l'apparition/disparition en fondu de
-    l'écran entier (gérée par l'appelant, calée sur l'audio de CE verset) qui
-    fait "coller" le texte à la récitation, sans effet karaoké.
-    `**_unused` absorbe d'éventuels anciens appels avec progress=/word_windows=
-    pour rester rétro-compatible sans rien casser.
+    Affiche le verset arabe, avec surlignage karaoké mot-à-mot QUAND
+    word_windows est fourni et cohérent avec le texte (issu de l'alignement
+    forcé — voir _align_ayah_words) : chaque mot déjà récité s'illumine
+    (couleur vive), le mot en cours de récitation a un léger halo pulsé, et
+    les mots pas encore récités restent dans une teinte plus sourde — un
+    repère visuel qui suit la lecture, connu pour retenir bien mieux
+    l'attention sur ce format de contenu.
+    Si word_windows est absent/invalide (alignement indisponible pour cette
+    ayah) ou si `progress` est None : repli intégral sur l'affichage statique
+    d'origine (une seule couleur pour tout le verset) — jamais d'erreur.
     """
     words = text.split()
     if not words:
         return 0
     lines = _wrap_words(words, font, max_w)
 
+    use_karaoke = (
+        progress is not None and word_windows is not None
+        and len(word_windows) == len(words)
+    )
+    p = max(0.0, min(1.0, progress)) if progress is not None else 0.0
+
+    _AR_COLOR_DIM = (196, 190, 176)  # mots pas encore récités : plus sourd, sans être invisible
+
     fh      = _line_h(font) + 6
     y       = y_start
     total_h = 0
+    gi      = 0  # index de mot global, dans l'ordre de `words` == ordre de word_windows
     for line in lines:
         line_w = sum(_word_w(font, w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
         x      = cx + line_w // 2
         for _, w, ww in line:
             x -= ww
-            # Lueur douce et discrète (constante, pas animée) derrière le mot
-            glow_a = int(alpha * 0.10)
-            if glow_a > 0:
-                for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
-                    draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_GLOW_COLOR, glow_a))
+            if use_karaoke:
+                w_start, w_end = word_windows[gi]
+                if p >= w_end:
+                    state = "done"
+                elif p >= w_start:
+                    state = "current"
+                else:
+                    state = "pending"
+            else:
+                state = "done"  # comportement d'origine : tout le verset dans la couleur pleine
+            gi += 1
+
+            if state == "current":
+                # Mot en cours : halo plus marqué et pulsé pour attirer l'œil
+                glow_a = int(alpha * 0.30)
+                for dx, dy in [(-3, 0), (3, 0), (0, -3), (0, 3), (-2,-2), (2,-2), (-2,2), (2,2)]:
+                    draw.text((x + dx, y + dy), w, font=font, fill=(*ACCENT_BRIGHT, glow_a))
+            else:
+                glow_a = int(alpha * 0.10)
+                if glow_a > 0:
+                    for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
+                        draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_GLOW_COLOR, glow_a))
             for dx, dy in _SHADOW_OFFSETS:
                 draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
-            draw.text((x, y), w, font=font, fill=(*_AR_COLOR, alpha))
+            fill_color = _AR_COLOR_DIM if state == "pending" else _AR_COLOR
+            word_alpha = int(alpha * 0.75) if state == "pending" else alpha
+            draw.text((x, y), w, font=font, fill=(*fill_color, word_alpha))
             x -= WORD_GAP
         y       += fh + line_gap
         total_h += fh + line_gap
@@ -1939,7 +1969,12 @@ HOOK_LINES = [
     "If you're overthinking everything today...",
     "Read slowly. This is for you.",
 ]
-HOOK_DUR      = 1.4
+HOOK_DUR      = 0.0
+# 🔙 Retour au format d'origine (celui qui generait bien plus de vues) : plus
+# de carte d'accroche avant le premier verset — la vidéo démarre directement
+# sur la récitation. HOOK_FRAMES/HOOK_AUDIO_DUR tombent naturellement à 0 ci-
+# dessous, ce qui désactive la boucle de rendu du hook et le silence audio
+# d'ouverture dans mix_audio() sans toucher au reste du pipeline.
 HOOK_FRAMES   = int(round(HOOK_DUR * FPS))
 HOOK_AUDIO_DUR = HOOK_FRAMES / FPS   # 🔧 verrouillé sur le nb de frames réel (zéro dérive, même logique que BREATH_DUR)
 OUTRO_DUR     = 2.0
@@ -2090,8 +2125,8 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     en_paragraphs = verse["en"].split("\n")
     en_wrapped    = [_wrap_words(p.split(), f["en"], 940) for p in en_paragraphs]
     en_n_lines    = sum(len(p) for p in en_wrapped) or 1
-    en_h          = en_n_lines * 84   # 🔧 espacement de ligne anglaise, aligné sur le "ly += 84" plus bas
-    block_h   = ar_est_h + 30 + 56 + 40 + en_h   # 🔧 +40 (était 24) : marge nette entre l'arabe et la traduction
+    en_h          = en_n_lines * 84   # espacement de ligne anglaise, aligné sur le "ly += 84" plus bas
+    block_h   = ar_est_h + 30 + 56 + 40 + en_h   # +40 : marge nette entre l'arabe et la traduction
     ar_top    = H // 2 - block_h // 2 + 20 + dy_anim
     # 🔒 Garde-fou : quelle que soit la longueur du verset (arabe+traduction),
     # on s'assure que le bas du bloc (dernière ligne de traduction) reste bien
@@ -2192,10 +2227,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     d.text((rx+2, ref_y+3), _clean_ref, font=f["ref"], fill=(0, 0, 0, int(a*0.55)))
     d.text((rx, ref_y), _clean_ref, font=f["ref"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
 
-    # ── 7. Traduction anglaise (fondu légèrement retardé sur l'arabe) ────────
-    # 🔧 FIX : la traduction fondait avec un retard (seuil 0.12) qui pouvait la
-    # laisser invisible plus longtemps que prévu sur les écrans courts — elle
-    # apparaît maintenant en même temps que le reste du texte.
+    # ── 7. Traduction anglaise ────────────────────────────────────────────────
     a_en  = a
     en_y  = ref_y + 64
     li    = 0
@@ -2206,7 +2238,6 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
             ly = en_y + li * 84
             x  = lx
             for _, w, ww in line:
-                # Ombre riche
                 for dx, dy in _SHADOW_OFFSETS:
                     d.text((x+dx, ly+dy), w, font=f["en"], fill=(0, 0, 0, min(255, int(a_en*0.55))))
                 d.text((x, ly), w, font=f["en"], fill=(*_EN_COLOR, a_en))
@@ -2309,27 +2340,87 @@ def get_audio_dur(path):
         return 4.5
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ALIGNEMENT FORCÉ MOT-À-MOT (timestamps réels de récitation)
+# ALIGNEMENT FORCÉ MOT-À-MOT (timestamps réels de récitation) — RÉTABLI
 # ═══════════════════════════════════════════════════════════════════════════
-# Contrairement à une transcription libre (Whisper), l'ALIGNEMENT FORCÉ compare
-# l'audio au texte du verset déjà connu à l'avance — beaucoup plus robuste face
-# aux élongations (madd) et à la prononciation tajweed qui perturbent une
-# reconnaissance vocale classique. On utilise ctc-forced-aligner (modèle MMS,
-# multilingue, gère l'arabe). Chargement paresseux : le modèle (~1.2 Go) n'est
-# téléchargé/chargé QUE si cette fonctionnalité est effectivement utilisée, et
-# tout échec (dépendance absente, pas de réseau, mésalignement...) retombe
-# silencieusement sur l'heuristique de longueur de mot (_screen_char_weights)
-# déjà en place — la génération de la vidéo n'est jamais bloquée par ceci.
-# 🔧 SIMPLIFICATION : l'ancien alignement mot-à-mot (modèle ctc-forced-aligner,
-# téléchargé/installé à la volée via pip + torch au premier lancement) servait
-# uniquement à faire "courir" un surlignage doré mot par mot façon karaoké.
-# Cet effet n'est plus voulu : chaque écran affiche désormais son verset
-# complet, de façon propre et statique, pendant toute sa fenêtre audio — ce qui
-# est largement suffisant pour "coller" à la récitation puisque le texte
-# apparaît/disparaît exactement au bon moment (cf. fade in/out synchronisés sur
-# l'audio dans generate()). Supprimer ce sous-système élimine au passage une
-# dépendance lourde et fragile (téléchargement réseau d'un modèle + poids
-# GitHub à la première exécution), qui pouvait échouer ou ralentir un run.
+# 🔙 RÉTABLISSEMENT (après une chute nette des vues) : ce sous-système avait
+# été supprimé pour simplifier/alléger le pipeline (dépendance lourde,
+# ~1.2 Go de modèle, plus fragile sur Colab), remplacé par un affichage
+# statique du verset entier. Constat direct : les vidéos AVEC surlignage
+# karaoké mot-à-mot faisaient nettement plus de vues que celles sans. On le
+# remet donc, mais en gardant EXACTEMENT la même philosophie de robustesse
+# que le reste du fichier : chargement paresseux (le modèle n'est
+# téléchargé/chargé QUE si on arrive ici), et TOUT échec (dépendance
+# absente, pas de réseau, mésalignement, timeout...) retombe silencieusement
+# sur l'heuristique de longueur de mot (_screen_char_weights) déjà en place
+# — la génération d'une vidéo n'est JAMAIS bloquée ni cassée par ceci, au
+# pire on perd juste l'effet karaoké sur CETTE ayah précise.
+#
+# Modèle : ctc-forced-aligner (MMS, multilingue, gère l'arabe) — compare
+# l'audio au texte du verset déjà connu à l'avance, beaucoup plus robuste
+# face aux élongations (madd) et au tajweed qu'une transcription libre
+# (Whisper). pip install fait une seule fois par run (best-effort).
+_ALIGNER = {"tried": False, "model": None, "tokenizer": None, "device": None, "mod": None}
+
+def _get_aligner():
+    """
+    Charge (une seule fois par run) le modèle d'alignement forcé. Retourne
+    None si indisponible pour QUELQUE raison que ce soit — jamais d'exception
+    qui remonte à l'appelant.
+    """
+    if _ALIGNER["tried"]:
+        return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
+    _ALIGNER["tried"] = True
+    try:
+        try:
+            import ctc_forced_aligner as _cfa
+        except ImportError:
+            print("   ⏳ Installation de ctc-forced-aligner (karaoké mot-à-mot, ~1.2 Go au 1er run)...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages",
+                             "ctc-forced-aligner"], check=True, timeout=600)
+            import ctc_forced_aligner as _cfa
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype  = torch.float16 if device == "cuda" else torch.float32
+        model, tokenizer = _cfa.load_alignment_model(device, dtype=dtype)
+        _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"] = model, tokenizer, device, _cfa
+        print(f"   ✅ Modèle d'alignement chargé ({device}) — karaoké mot-à-mot actif.")
+    except Exception as e:
+        print(f"   ⚠ Alignement forcé indisponible ({e}) — repli sur l'heuristique de longueur de mot, sans karaoké sur cette ayah.")
+        _ALIGNER["model"] = None
+    return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
+
+def _align_ayah_words(audio_path, ar_text, timeout_s=60):
+    """
+    Aligne le texte arabe complet d'une ayah sur son audio. Retourne une liste
+    de (mot, t_start_s, t_end_s) dans le MÊME ORDRE que ar_text.split(), ou
+    None si l'alignement a échoué / le nombre de mots ne correspond pas
+    (mieux vaut aucun karaoké qu'un karaoké désynchronisé).
+    """
+    model, tokenizer, device, cfa = _get_aligner()
+    if model is None:
+        return None
+    words_expected = ar_text.split()
+    if not words_expected:
+        return None
+    try:
+        waveform = cfa.load_audio(str(audio_path), model.dtype, model.device)
+        emissions, stride = cfa.generate_emissions(model, waveform, batch_size=1)
+        tokens_starred, text_starred = cfa.preprocess_text(ar_text, romanize=True, language="ara")
+        segments, scores, blank_id = cfa.get_alignments(emissions, tokens_starred, tokenizer)
+        spans = cfa.get_spans(tokens_starred, segments, blank_id)
+        results = cfa.postprocess_results(text_starred, spans, stride, scores)
+        if len(results) != len(words_expected):
+            print(f"   ⚠ Alignement : {len(results)} mots retournés vs {len(words_expected)} attendus — ignoré (pas de karaoké sur cette ayah).")
+            return None
+        out = []
+        for w_expected, r in zip(words_expected, results):
+            out.append((w_expected, float(r["start"]), float(r["end"])))
+        return out
+    except Exception as e:
+        print(f"   ⚠ Échec alignement sur cette ayah ({e}) — repli sur l'heuristique, sans karaoké ici.")
+        return None
+
+
 def _screen_char_weights(sub_parts):
     """
     Pour une ayah affichée sur plusieurs écrans (ex. Ayat Al-Kursi a→h), répartit
@@ -2344,14 +2435,14 @@ def _screen_char_weights(sub_parts):
     return [char_count(v["ar"]) for v in sub_parts]
 
 def select_verses(passage, reciter):
-    """v10 : TOUS les versets du passage. Chaque écran affiche son texte au
-    complet, de façon statique et propre (plus de surlignage mot-à-mot) — le
-    texte apparaît en fondu dès que la récitation atteint son écran et
-    disparaît en fondu juste avant l'écran suivant, ce qui suffit à bien
-    "coller" à la récitation sans les fragilités d'un alignement mot-à-mot.
+    """v11 : TOUS les versets du passage. Chaque écran affiche son texte, avec
+    surlignage karaoké mot-à-mot QUAND l'alignement forcé réussit pour cette
+    ayah (repli automatique et silencieux sur l'ancien comportement — texte
+    statique, écrans découpés au prorata de la longueur du texte — sinon).
     Les sous-parties d'un même verset (même surah+ayah) partagent UN seul audio ;
-    la durée totale de l'ayah est répartie entre ses écrans au prorata de la
-    longueur du texte de chacun (cf. _screen_char_weights).
+    quand l'alignement réussit, les limites de chaque écran sont calées sur les
+    vraies pauses de la récitation (plutôt qu'une simple proportion de texte) ;
+    sinon on retombe sur _screen_char_weights comme avant.
     """
     sel, audios, aud_durs, frame_counts, word_windows = [], [], [], [], []
 
@@ -2362,8 +2453,8 @@ def select_verses(passage, reciter):
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         ayah_groups.setdefault(key, []).append(verse)
 
-    ayah_audio_cache    = {}  # (s,a,qid) → (audio_path, ad, weights, total_weight)
-    ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés par les sous-parties précédentes
+    ayah_audio_cache    = {}  # (s,a,qid) → dict avec toutes les infos de découpage de cette ayah
+    ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés (repli sans alignement)
     ayah_subpart_idx    = {}  # (s,a,qid) → index de la prochaine sous-partie dans ayah_groups[key]
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
     cum_recitation_dur  = 0.0  # 🎯 durée cumulée de récitation déjà retenue (hors hook/outro/breath)
@@ -2416,7 +2507,51 @@ def select_verses(passage, reciter):
                 break
             cum_recitation_dur += ad
             weights = _screen_char_weights(ayah_groups[key])
-            ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
+
+            # ── Tentative d'alignement forcé (karaoké mot-à-mot) ────────────
+            # Texte complet de l'ayah = concaténation ORDONNÉE de ses sous-
+            # parties (c'est ainsi qu'elles ont été construites, cf. plus haut).
+            sub_parts   = ayah_groups[key]
+            full_text   = " ".join(v["ar"] for v in sub_parts)
+            word_counts = [len(v["ar"].split()) for v in sub_parts]
+            aligned     = _align_ayah_words(audio, full_text)  # None si indispo/échec
+
+            subpart_windows      = None  # [(start_s, end_s), ...] par sous-partie, si alignement OK
+            subpart_word_windows = None  # [[(local_start,local_end), ...], ...] par sous-partie
+
+            if aligned is not None:
+                cum_w = [0]
+                for c in word_counts:
+                    cum_w.append(cum_w[-1] + c)
+                subpart_windows, subpart_word_windows = [], []
+                prev_end = 0.0
+                for si in range(len(sub_parts)):
+                    i0, i1 = cum_w[si], cum_w[si + 1]
+                    words_this = aligned[i0:i1]
+                    w_start = prev_end
+                    if si == len(sub_parts) - 1:
+                        w_end = ad  # 🔒 dernière sous-partie : va jusqu'au bout (souffle inclus, jamais coupé)
+                    else:
+                        # Frontière = pile entre la fin de ce groupe de mots et le
+                        # début du suivant (la pause naturelle entre les deux, si
+                        # il y en a une réellement dans la récitation).
+                        this_end   = words_this[-1][2] if words_this else prev_end
+                        next_start = aligned[i1][1] if i1 < len(aligned) else this_end
+                        w_end = max(this_end, min(next_start, ad))
+                    w_end = max(w_start + 0.05, min(w_end, ad))
+                    subpart_windows.append((w_start, w_end))
+                    wd = max(0.001, w_end - w_start)
+                    subpart_word_windows.append([
+                        (max(0., min(1., (ws - w_start) / wd)), max(0., min(1., (we - w_start) / wd)))
+                        for (_, ws, we) in words_this
+                    ])
+                    prev_end = w_end
+                print(f"      {verse['surah']}:{verse['ayah']} — karaoké mot-à-mot actif ({len(aligned)} mots alignés)")
+
+            ayah_audio_cache[key] = {
+                "audio": audio, "ad": ad, "weights": weights, "total_weight": sum(weights),
+                "subpart_windows": subpart_windows, "subpart_word_windows": subpart_word_windows,
+            }
             ayah_weight_before[key] = 0
             ayah_subpart_idx[key]   = 0
             n_screens = len(weights)
@@ -2424,20 +2559,27 @@ def select_verses(passage, reciter):
         else:
             print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
 
-        audio, ad, weights, total_weight = ayah_audio_cache[key]
+        cache = ayah_audio_cache[key]
+        audio, ad, weights, total_weight = cache["audio"], cache["ad"], cache["weights"], cache["total_weight"]
         idx  = ayah_subpart_idx[key]
         w    = weights[idx]
         is_last_subpart = (idx == len(weights) - 1)
+        this_word_windows = None
 
-        # ── Fenêtre temporelle de cette sous-partie dans l'audio complet ──────
-        w_before     = ayah_weight_before[key]
-        window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
-        window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
+        if cache["subpart_windows"] is not None:
+            # ── Découpage précis, calé sur l'alignement audio réel ──────────
+            window_start, window_end = cache["subpart_windows"][idx]
+            this_word_windows = cache["subpart_word_windows"][idx]
+        else:
+            # ── Repli : proportion de longueur de texte (comportement d'origine) ──
+            w_before     = ayah_weight_before[key]
+            window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
+            window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
         window_start = max(0.0, min(window_start, ad))
         window_end   = max(window_start + 0.05, min(window_end, ad))
         window_dur   = window_end - window_start
 
-        ayah_weight_before[key] = w_before + w
+        ayah_weight_before[key] = ayah_weight_before[key] + w
         ayah_subpart_idx[key]   = idx + 1
 
         # 🔧 Zéro dérive : le nombre de frames de CHAQUE écran est calculé par
@@ -2459,7 +2601,7 @@ def select_verses(passage, reciter):
         audios.append(audio)
         aud_durs.append(window_dur)
         frame_counts.append(n_audio_frames)
-        word_windows.append(None)  # 🔧 conservé pour compat de signature ; plus de karaoké mot-à-mot
+        word_windows.append(this_word_windows)  # None si pas d'alignement pour cette ayah (repli statique)
 
     # Audio mixé : dédoublonner les fichiers audio (même ayah = même fichier complet)
     seen_audio = []
@@ -2695,30 +2837,28 @@ def generate(passage_idx=None):
     total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
 
-    # ── Carte d'accroche (hook) — avant le premier verset ────────────────────
-    # 🔧 Variété garantie entre runs : RNG.choice() seul peut retomber sur la
-    # même accroche que la veille (pur hasard, ~1 chance sur 25) — chaque run
-    # étant un process séparé (cron/daily_upload.py), aucune mémoire n'existait
-    # entre deux exécutions. On mémorise maintenant les dernières accroches
-    # utilisées (fichier cache, comme les passages/images) et on exclut la
-    # moitié la plus récente de la liste des choix, pour forcer la rotation.
-    hook_text = _pick_hook()
-    hook_fade  = max(1, int(HOOK_FRAMES * 0.28))
-    hook_scene = scenes[0][0]
-    hook_kb    = p["kb"][0]
-    for fi in range(HOOK_FRAMES):
-        t_h = fi / max(1, HOOK_FRAMES)
-        frame = ken_burns(hook_scene, t_h, **hook_kb)
-        if fi < hook_fade:
-            ha = fi / hook_fade
-        elif fi > HOOK_FRAMES - hook_fade:
-            ha = (HOOK_FRAMES - fi) / hook_fade
-        else:
-            ha = 1.0
-        frame = render_hook_card(frame, hook_text, max(0., ha))
-        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
-        gi += 1
-    print(f"  Accroche « {hook_text} » OK")
+    # ── Carte d'accroche (hook) — DÉSACTIVÉE (HOOK_DUR=0) ─────────────────────
+    # 🔙 Le format qui générait le plus de vues démarrait direct sur le verset,
+    # sans carte d'accroche. On garde le code prêt (au cas où) mais il ne
+    # s'exécute plus tant que HOOK_FRAMES==0.
+    if HOOK_FRAMES > 0:
+        hook_text = _pick_hook()
+        hook_fade  = max(1, int(HOOK_FRAMES * 0.28))
+        hook_scene = scenes[0][0]
+        hook_kb    = p["kb"][0]
+        for fi in range(HOOK_FRAMES):
+            t_h = fi / max(1, HOOK_FRAMES)
+            frame = ken_burns(hook_scene, t_h, **hook_kb)
+            if fi < hook_fade:
+                ha = fi / hook_fade
+            elif fi > HOOK_FRAMES - hook_fade:
+                ha = (HOOK_FRAMES - fi) / hook_fade
+            else:
+                ha = 1.0
+            frame = render_hook_card(frame, hook_text, max(0., ha))
+            frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+            gi += 1
+        print(f"  Accroche « {hook_text} » OK")
 
     for vi in range(n):
         verse   = verses[vi]
