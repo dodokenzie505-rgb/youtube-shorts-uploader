@@ -2371,13 +2371,35 @@ def _get_aligner():
         return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
     _ALIGNER["tried"] = True
     try:
+        # 🔧 FIX CRITIQUE : le package PyPI nommé "ctc-forced-aligner" n'est PAS
+        # le bon — c'est un fork tiers (Deskpai) avec une API complètement
+        # différente (AlignmentTorch/generate_srt, pas de load_alignment_model
+        # ni generate_emissions). Le vrai package (MahmoudAshraf97, celui dont
+        # l'API est utilisée ci-dessous) ne s'installe QUE depuis GitHub
+        # directement. Avec le mauvais package, l'import réussissait mais
+        # `load_alignment_model` n'existait pas → échec silencieux, repli
+        # permanent sur l'heuristique, sans jamais aucun karaoké — exactement
+        # le bug remonté. On vérifie donc explicitement la présence de la
+        # bonne fonction avant de faire confiance à un import existant.
         try:
             import ctc_forced_aligner as _cfa
+            if not hasattr(_cfa, "load_alignment_model"):
+                raise ImportError("mauvais package 'ctc_forced_aligner' installé (API incompatible)")
         except ImportError:
-            print("   ⏳ Installation de ctc-forced-aligner (karaoké mot-à-mot, ~1.2 Go au 1er run)...")
+            print("   ⏳ Installation de ctc-forced-aligner depuis GitHub (karaoké mot-à-mot, ~1.2 Go au 1er run)...")
+            subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "ctc-forced-aligner"],
+                            check=False, timeout=60)
             subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages",
-                             "ctc-forced-aligner"], check=True, timeout=600)
-            import ctc_forced_aligner as _cfa
+                             "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"],
+                            check=True, timeout=900)
+            import importlib
+            if "ctc_forced_aligner" in sys.modules:
+                importlib.reload(sys.modules["ctc_forced_aligner"])
+                _cfa = sys.modules["ctc_forced_aligner"]
+            else:
+                import ctc_forced_aligner as _cfa
+            if not hasattr(_cfa, "load_alignment_model"):
+                raise ImportError("toujours pas la bonne API après réinstallation depuis GitHub")
         import torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype  = torch.float16 if device == "cuda" else torch.float32
