@@ -1744,7 +1744,7 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
     )
     p = max(0.0, min(1.0, progress)) if progress is not None else 0.0
 
-    _AR_COLOR_LIT = ACCENT_BRIGHT  # mot prononcé : couleur vive ("illuminée")
+    _AR_COLOR_LIT = (255, 196, 20)  # mot prononcé : or vif, forte accroche visuelle sur fond sombre
 
     fh      = _line_h(font) + 6
     y       = y_start
