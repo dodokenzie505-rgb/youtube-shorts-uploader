@@ -1725,11 +1725,10 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
     """
     Affiche le verset arabe, avec surlignage karaoké mot-à-mot QUAND
     word_windows est fourni et cohérent avec le texte (issu de l'alignement
-    forcé — voir _align_ayah_words) : chaque mot déjà récité s'illumine
-    (couleur vive), le mot en cours de récitation a un léger halo pulsé, et
-    les mots pas encore récités restent dans une teinte plus sourde — un
-    repère visuel qui suit la lecture, connu pour retenir bien mieux
-    l'attention sur ce format de contenu.
+    forcé — voir _align_ayah_words) : tous les mots sont dans la couleur de
+    base (blanc chaud) et seul le mot EN TRAIN d'être prononcé s'illumine
+    (couleur vive + halo) — l'effet est ponctuel, pas cumulatif : dès que le
+    mot suivant commence, le précédent revient à la couleur de base.
     Si word_windows est absent/invalide (alignement indisponible pour cette
     ayah) ou si `progress` est None : repli intégral sur l'affichage statique
     d'origine (une seule couleur pour tout le verset) — jamais d'erreur.
@@ -1745,7 +1744,7 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
     )
     p = max(0.0, min(1.0, progress)) if progress is not None else 0.0
 
-    _AR_COLOR_DIM = (196, 190, 176)  # mots pas encore récités : plus sourd, sans être invisible
+    _AR_COLOR_LIT = ACCENT_BRIGHT  # mot prononcé : couleur vive ("illuminée")
 
     fh      = _line_h(font) + 6
     y       = y_start
@@ -1765,24 +1764,24 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
                 else:
                     state = "pending"
             else:
-                state = "done"  # comportement d'origine : tout le verset dans la couleur pleine
+                state = "pending"  # comportement d'origine : tout le verset en blanc de base
             gi += 1
 
             if state == "current":
-                # Mot en cours : halo plus marqué et pulsé pour attirer l'œil
-                glow_a = int(alpha * 0.30)
+                # Mot en cours : halo marqué et pulsé — l'instant précis de l'illumination
+                glow_a = int(alpha * 0.45)
                 for dx, dy in [(-3, 0), (3, 0), (0, -3), (0, 3), (-2,-2), (2,-2), (-2,2), (2,2)]:
-                    draw.text((x + dx, y + dy), w, font=font, fill=(*ACCENT_BRIGHT, glow_a))
+                    draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_COLOR_LIT, glow_a))
             else:
+                # Pas encore prononcé OU déjà prononcé : couleur de base, pas d'illumination
                 glow_a = int(alpha * 0.10)
                 if glow_a > 0:
                     for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
                         draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_GLOW_COLOR, glow_a))
             for dx, dy in _SHADOW_OFFSETS:
                 draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
-            fill_color = _AR_COLOR_DIM if state == "pending" else _AR_COLOR
-            word_alpha = int(alpha * 0.75) if state == "pending" else alpha
-            draw.text((x, y), w, font=font, fill=(*fill_color, word_alpha))
+            fill_color = _AR_COLOR_LIT if state == "current" else _AR_COLOR
+            draw.text((x, y), w, font=font, fill=(*fill_color, alpha))
             x -= WORD_GAP
         y       += fh + line_gap
         total_h += fh + line_gap
