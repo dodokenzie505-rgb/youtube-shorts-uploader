@@ -1688,7 +1688,7 @@ def fonts():
             # + interlignes resserrés (voir draw_arabic_text) pour un bloc plus
             # compact — et l'anglais est agrandi (62→68) pour être bien visible.
             "ar":      _load_font(AR, 80, "ar"),
-            "en":      _load_font(IT, 68, "en"),
+            "en":      _load_font(IT, 56, "en"),
             "ref":     _load_font(RG, 42, "ref"),
             "small":   _load_font(RG, 30, "small"),
             "title":   _load_font(IT, 42, "title"),
@@ -2156,14 +2156,14 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     en_paragraphs = verse["en"].split("\n")
     en_wrapped    = [_wrap_words(p.split(), f["en"], 940) for p in en_paragraphs]
     en_n_lines    = sum(len(p) for p in en_wrapped) or 1
-    en_h          = en_n_lines * 84   # espacement de ligne anglaise, aligné sur le "ly += 84" plus bas
+    en_h          = en_n_lines * 70   # espacement de ligne anglaise (police réduite à 56px), aligné sur "ly += 70" plus bas
     block_h   = ar_est_h + 30 + 56 + 40 + en_h   # +40 : marge nette entre l'arabe et la traduction
     ar_top    = H // 2 - block_h // 2 + 20 + dy_anim
     # 🔒 Garde-fou : quelle que soit la longueur du verset (arabe+traduction),
     # on s'assure que le bas du bloc (dernière ligne de traduction) reste bien
     # visible à l'écran, avec une marge de sécurité — au lieu de laisser un
     # verset exceptionnellement long pousser la traduction hors cadre.
-    max_ar_top = H - 170 - (block_h - 20)  # garde ~170px de marge basse
+    max_ar_top = H - 220 - (block_h - 20)  # garde ~220px de marge basse (zone UI Shorts)
     ar_top     = min(ar_top, max_ar_top)
     ar_top     = max(ar_top, 60)  # et ne remonte jamais au-dessus du haut de l'écran
     mid       = H // 2 + dy_anim
@@ -2266,7 +2266,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
         for line in para:
             line_w = sum(_word_w(f["en"], w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
             lx = W//2 - line_w // 2
-            ly = en_y + li * 84
+            ly = en_y + li * 70
             x  = lx
             for _, w, ww in line:
                 for dx, dy in _SHADOW_OFFSETS:
