@@ -1304,9 +1304,18 @@ def _build_passages_from_api(curated, target_total):
     # dépend du récitateur choisi plus tard ; le troncage précis à l'audio
     # réel reste de toute façon géré au moment de generate()).
     SEC_PER_WORD_EST    = 0.55  # récitation murattal modérée, mots arabes
-    TARGET_RECITATION_S = max(5.0, MAX_TOTAL_DUR - HOOK_DUR - OUTRO_DUR - 1.0)  # marge de 1s
+    # 🎯 Cible abaissée (~15s de récitation, donc vidéo totale ~17-18s avec
+    # l'outro) au lieu de viser le plafond de 25s. Les données sur les
+    # formats courts (toutes plateformes confondues) sont sans ambiguïté :
+    # en dessous de 20s, le taux de complétion — LE signal n°1 pour la
+    # distribution algorithmique, bien avant les likes/abonnements — grimpe
+    # nettement. On reste dans la fourchette large 15-30s qui reste correcte,
+    # mais on vise le bas plutôt que le plafond. MAX_TOTAL_DUR (25s) reste le
+    # garde-fou dur en cas de verset plus long que prévu — jamais dépassé,
+    # juste plus rarement approché volontairement.
+    TARGET_RECITATION_S = 15.0
     MIN_AYAT_PER_BLOCK   = 3     # jamais un bloc d'1-2 ayat isolées (trop court, haché)
-    MAX_AYAT_PER_BLOCK   = 14    # garde-fou haut (sourates à ayat très courtes)
+    MAX_AYAT_PER_BLOCK   = 10    # garde-fou haut, abaissé en cohérence avec la cible plus courte
 
     for ch in chapters:
         if len(extra) >= need:
@@ -1440,14 +1449,19 @@ print(f"   📚 {len(PASSAGES)} passages disponibles au total "
 # RECITATEURS — 21 récitateurs de qualité
 # ═══════════════════════════════════════════════════════════════════════════
 RECITERS = [
-    # 🔧 FIX copyright : "Mishary Rashid Alafasy" (qid 1) retiré du pool.
-    # Ses enregistrements sont enregistrés dans YouTube Content ID avec une
-    # politique "durée maximale" — toute vidéo utilisant plus de quelques
-    # secondes d'affilée de son audio est bloquée automatiquement dans le
-    # monde entier (pas un strike, mais la vidéo reste illisible). Comme ce
-    # script récite des passages complets (bien au-delà de ce seuil), le
-    # blocage était systématique. Les autres récitateurs ci-dessous n'ont pas
-    # ce problème rapporté à ce jour.
+    # 🔙 RÉINTÉGRATION (après baisse de vues + retour aux ~15-18s de récitation) :
+    # Mishary Rashid Alafasy (le récitateur le plus écouté au monde — chaîne
+    # diamant YouTube, extraits à 100M+ vues) avait été retiré du pool car
+    # Content ID le bloquait automatiquement sur les vidéos dépassant quelques
+    # secondes d'affilée de son audio. Les vidéos visaient alors jusqu'à 25s ;
+    # elles visent maintenant ~15-18s (voir TARGET_RECITATION_S) — nettement
+    # sous le seuil probable de déclenchement. Si des blocages Content ID
+    # réapparaissent malgré tout, retirer à nouveau son entrée ci-dessous.
+    # Idem pour Yasser Al-Dosari (le récitateur dont les extraits courts et
+    # très émotionnels sont les plus viraux en format court sur les réseaux) —
+    # jamais testé sur ce pipeline, statut Content ID inconnu, à surveiller.
+    {"name": "Mishary Rashid Alafasy",         "qid": 90,  "ev": "Alafasy_128kbps",              "flag": "🇰🇼"},
+    {"name": "Yasser Al-Dosari",               "qid": 91,  "ev": "Yasser_Ad-Dussary_128kbps",    "flag": "🇸🇦"},
     {"name": "Abdul Rahman Al-Sudais",       "qid": 2,   "ev": "AbdulSamad_128kbps",           "flag": "🇸🇦"},
     {"name": "Saad Al-Ghamdi",               "qid": 3,   "ev": "Saad_Al-Ghamdi_128kbps",       "flag": "🇸🇦"},
     {"name": "Maher Al-Muaiqly",             "qid": 10,  "ev": "MaherAlMuaiqly128kbps",        "flag": "🇸🇦"},
@@ -1543,6 +1557,10 @@ PHOTOS = [
     ("https://images.unsplash.com/photo-1504192010706-dd7f569ee2be?w=1080&h=1920&fit=crop&crop=center", "storm_clouds"),
     # Rivers and lakes
     ("https://images.unsplash.com/photo-1501952476817-5a986dc68ea4?w=1080&h=1920&fit=crop&crop=center", "clear_river"),
+    ("https://images.unsplash.com/photo-1439853949127-fa647821eba0?w=1080&h=1920&fit=crop&crop=center", "flowing_river"),
+    ("https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=1080&h=1920&fit=crop&crop=center", "river_forest"),
+    ("https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=1080&h=1920&fit=crop&crop=center", "river_mist"),
+    ("https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1080&h=1920&fit=crop&crop=center", "river_valley"),
     ("https://images.unsplash.com/photo-1455218873509-8fa753426d7a?w=1080&h=1920&fit=crop&crop=center", "alpine_lake"),
     ("https://images.unsplash.com/photo-1503756234508-e32369269ddb?w=1080&h=1920&fit=crop&crop=center", "turquoise_lake"),
 ]
@@ -1863,6 +1881,15 @@ def cinematic(img, p):
     img = ImageEnhance.Contrast(img).enhance(p["contrast"])
     img = ImageEnhance.Color(img).enhance(p["color_sat"])
     img = ImageEnhance.Brightness(img).enhance(p["brightness"])
+    if p.get("mood") == "mono":
+        # 🎨 Ambiance sombre/désaturée — pas un noir et blanc plat (trop terne
+        # à l'écran), mais un duotone très désaturé avec une légère teinte
+        # émeraude froide dans les ombres, cohérent avec le reste de
+        # l'identité visuelle. Plus de contraste pour un rendu dramatique.
+        gray = ImageEnhance.Color(img).enhance(0.06)
+        gray = ImageEnhance.Contrast(gray).enhance(1.22)
+        tint = Image.new("RGB", (W, H), (24, 34, 30))
+        img  = Image.blend(gray, Image.blend(gray, tint, 0.10), 0.55)
     # Vignette légère uniquement sur les bords — jamais trop sombre au centre
     vign = Image.new("L", (W, H), 0)
     vd   = ImageDraw.Draw(vign)
@@ -1934,6 +1961,11 @@ def make_params(n):
         "vign":          RNG.uniform(60, 100),       # Vignette très légère
         "xf":            RNG.randint(8, 16),
         "kb":            kb,
+        # 🎨 ~30% des vidéos adoptent une ambiance sombre/désaturée (voir
+        # cinematic()) pour plus de variété émotionnelle — le reste garde le
+        # rendu couleur habituel. Choisi UNE fois par vidéo (pas par scène),
+        # pour rester cohérent du début à la fin.
+        "mood":          RNG.choices(["color", "mono"], weights=[70, 30])[0],
     }
 
 # 🎯 ACCROCHE D'OUVERTURE — les 1-2 premières secondes décident si quelqu'un
