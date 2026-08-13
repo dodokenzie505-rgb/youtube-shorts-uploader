@@ -8,11 +8,54 @@ from pathlib import Path
 # Installation des dépendances système si nécessaire
 def _ensure_installed():
     import shutil
+    # 🔧 FIX : sur une image fraîche (Colab neuf, conteneur Docker minimal...) le
+    # cache apt local peut être vide/périmé, ce qui fait échouer TOUT
+    # 'apt-get install' avec "Unable to locate package" — y compris les
+    # installations censées corriger la traduction invisible plus bas, dont les
+    # erreurs sont avalées silencieusement (try/except: pass). Un simple
+    # 'apt-get update' préalable (best-effort, jamais bloquant) réduit
+    # nettement ce risque avant tout install.
+    try:
+        subprocess.run(["sudo", "apt-get", "update", "-y", "-q"],
+                        check=False, timeout=60, capture_output=True)
+    except Exception:
+        pass
     if not shutil.which("ffmpeg"):
         subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "ffmpeg"], check=True)
     amiri_path = "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Regular.ttf"
     if not os.path.exists(amiri_path):
         subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-hosny-amiri"], check=True)
+    # 🔧 FIX traduction invisible : les polices utilisées pour l'ANGLAIS (titre,
+    # traduction, référence, accroche) n'étaient JAMAIS explicitement installées
+    # — contrairement à Amiri pour l'arabe (garanti ci-dessus). Sur une machine
+    # où fonts-liberation / fonts-freefont-ttf ne sont pas déjà présents (image
+    # Ubuntu minimale, environnement Colab frais...), _load_font() retombait
+    # SILENCIEUSEMENT sur ImageFont.load_default() — une police bitmap minuscule
+    # qui ignore complètement la taille demandée. Résultat : la traduction
+    # anglaise était techniquement dessinée, mais à une taille quasi invisible.
+    # On garantit maintenant ces polices exactement comme Amiri (bloquant, avec
+    # secours DejaVu en toute fin de liste dans fonts() de toute façon).
+    liberation_path = "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf"
+    if not os.path.exists(liberation_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-liberation"],
+                            check=True, timeout=120)
+        except Exception:
+            pass  # non-bloquant : FreeSerif/DejaVu prennent le relais (voir fonts())
+    freefont_path = "/usr/share/fonts/truetype/freefont/FreeSerifItalic.ttf"
+    if not os.path.exists(freefont_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-freefont-ttf"],
+                            check=True, timeout=120)
+        except Exception:
+            pass  # non-bloquant : DejaVu (quasi toujours présent) prend le relais
+    dejavu_path = "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf"
+    if not os.path.exists(dejavu_path):
+        try:
+            subprocess.run(["sudo", "apt-get", "install", "-y", "-q", "fonts-dejavu-core"],
+                            check=True, timeout=120)
+        except Exception:
+            pass
     # 🖋 Police coranique plus soignée (Scheherazade New — style Uthmani, très
     # lisible, largement utilisée par les apps de lecture du Coran). Best-effort :
     # si le paquet n'existe pas sur ce système, on continue avec Amiri (déjà bien).
@@ -75,7 +118,25 @@ FPS       = 24
 # l'ajout de nouvelles ayat s'arrête toujours à une frontière d'ayah.
 # Réglable via la variable d'environnement MAX_TOTAL_DUR_S (défaut 25s).
 MAX_TOTAL_DUR = float(os.getenv("MAX_TOTAL_DUR_S", "25"))
-BREATH    = 0.40   # Silence naturel entre versets (respecte le rythme de la récitation)
+BREATH    = float(os.getenv("BREATH_S", "0.18"))
+# 🔧 FIX "récitation coupée" (v1) : un silence de 0.40s était inséré entre
+# CHAQUE verset, ce qui — combiné aux versets manquants corrigés par
+# _split_passages_on_gaps() ci-dessous — donnait l'impression d'un montage
+# haché plutôt que d'une récitation continue. On était alors passé à 0s par
+# défaut (aucun silence du tout).
+# 🔧 FIX "respiration coupée" (v2) : 0s, c'est TROP peu — ça ne laisse
+# littéralement aucun temps au récitateur pour respirer entre deux ayat,
+# ce qui sonne artificiel/essoufflé plutôt que naturel. On revient à un
+# court souffle de 0.18s par défaut (nettement moins que les 0.40s d'origine
+# qui, eux, cassaient la continuité) — un compromis entre "montage haché"
+# (trop long) et "respiration coupée" (trop court). Uniquement entre deux
+# AYAT DIFFÉRENTES (jamais entre sous-parties d'une même ayah, qui restent
+# calées sur le découpage proportionnel de l'audio réel — voir
+# select_verses()/_screen_char_weights) : le défilement à l'écran continue
+# donc de suivre exactement la récitation, ce souffle ne fait qu'ajouter une
+# respiration entre deux ayat, sans toucher au timing à l'intérieur d'une
+# ayah. Réglable via BREATH_S (ex: BREATH_S=0 pour revenir à zéro souffle,
+# BREATH_S=0.3 pour un souffle plus marqué).
 # 🔧 FIX karaoké parfait : le nombre de frames vidéo du breath (BREATH_FRAMES) et la
 # durée AUDIO du silence inséré entre versets DOIVENT être calculés depuis la MÊME
 # source. Avant : breath_frames = int(BREATH*FPS) = 9 frames (0.375s vidéo) alors que
@@ -1230,7 +1291,32 @@ def _build_passages_from_api(curated, target_total):
         print(f"   ⚠ Impossible de joindre l'API Quran.com ({e}) — extension annulée, on garde les {len(curated)} passages curatés.")
         return []
 
-    CHUNK_SIZE = 7  # ~7 ayat par écran-passage, cohérent avec le style des passages curatés
+    # 🎯 Découpage en blocs VISANT ~25s au lieu d'un nombre fixe d'ayat.
+    # Avant : CHUNK_SIZE=7 ayat, quel que soit leur longueur — sur des sourates
+    # à ayat très courtes (ex: Al-Falaq, An-Nas), 7 ayat ne totalisent parfois
+    # que 8-10s de récitation, donnant des vidéos bien en-deçà de MAX_TOTAL_DUR
+    # (25s par défaut) → moins de temps de visionnage utile pour l'algo. À
+    # l'inverse, sur des ayat très longues, 7 ayat peuvent largement dépasser
+    # 25s (le troncage runtime s'en charge, mais on perd le contrôle du
+    # découpage éditorial). On accumule maintenant les ayat dans un bloc
+    # jusqu'à approcher le budget de récitation cible, en estimant la durée
+    # par un nombre de mots arabes (heuristique grossière — le rythme réel
+    # dépend du récitateur choisi plus tard ; le troncage précis à l'audio
+    # réel reste de toute façon géré au moment de generate()).
+    SEC_PER_WORD_EST    = 0.55  # récitation murattal modérée, mots arabes
+    # 🎯 Cible abaissée (~15s de récitation, donc vidéo totale ~17-18s avec
+    # l'outro) au lieu de viser le plafond de 25s. Les données sur les
+    # formats courts (toutes plateformes confondues) sont sans ambiguïté :
+    # en dessous de 20s, le taux de complétion — LE signal n°1 pour la
+    # distribution algorithmique, bien avant les likes/abonnements — grimpe
+    # nettement. On reste dans la fourchette large 15-30s qui reste correcte,
+    # mais on vise le bas plutôt que le plafond. MAX_TOTAL_DUR (25s) reste le
+    # garde-fou dur en cas de verset plus long que prévu — jamais dépassé,
+    # juste plus rarement approché volontairement.
+    TARGET_RECITATION_S = max(5.0, MAX_TOTAL_DUR - HOOK_DUR - OUTRO_DUR - 1.0)  # ~25s au total, comme demandé
+    MIN_AYAT_PER_BLOCK   = 3
+    MAX_AYAT_PER_BLOCK   = 14
+
     for ch in chapters:
         if len(extra) >= need:
             break
@@ -1238,7 +1324,7 @@ def _build_passages_from_api(curated, target_total):
         vcount = ch.get("verses_count", 0)
         name_en = ch.get("translated_name", {}).get("name") or ch.get("name_simple", f"Surah {cid}")
         name_simple = ch.get("name_simple", f"Surah {cid}")
-        if cid in covered_surahs and vcount <= CHUNK_SIZE:
+        if cid in covered_surahs and vcount <= MIN_AYAT_PER_BLOCK:
             # Petite sourate déjà entièrement couverte par les passages curatés : on saute.
             continue
         try:
@@ -1248,12 +1334,29 @@ def _build_passages_from_api(curated, target_total):
             continue
         if not verses_raw:
             continue
-        # Découpage en blocs de CHUNK_SIZE ayat (la dernière sourate déjà entière
-        # si elle tient en un seul bloc, sinon plusieurs écrans successifs).
-        for start in range(0, len(verses_raw), CHUNK_SIZE):
+        # Découpage en blocs visant TARGET_RECITATION_S de récitation estimée
+        # (la dernière sourate déjà entière si elle tient en un seul bloc,
+        # sinon plusieurs écrans successifs).
+        start = 0
+        while start < len(verses_raw):
             if len(extra) >= need:
                 break
-            block = verses_raw[start:start + CHUNK_SIZE]
+            block, est_dur = [], 0.0
+            i = start
+            while i < len(verses_raw):
+                v = verses_raw[i]
+                n_words = len(v.get("text_uthmani", "").split())
+                v_est   = n_words * SEC_PER_WORD_EST
+                # On ajoute toujours au moins MIN_AYAT_PER_BLOCK ayat, puis on
+                # s'arrête dès que le budget cible est atteint (sans dépasser
+                # MAX_AYAT_PER_BLOCK) — on ajoute l'ayah qui fait franchir le
+                # seuil (mieux vaut légèrement dépasser 25s, tronqué ensuite
+                # au runtime, que s'arrêter trop court).
+                block.append(v)
+                est_dur += v_est
+                i += 1
+                if len(block) >= MIN_AYAT_PER_BLOCK and (est_dur >= TARGET_RECITATION_S or len(block) >= MAX_AYAT_PER_BLOCK):
+                    break
             verses_out = []
             for v in block:
                 ayah_num = v.get("verse_number")
@@ -1276,13 +1379,15 @@ def _build_passages_from_api(curated, target_total):
                     "ref": f"{cid}:{ayah_num}", "surah": cid, "ayah": ayah_num,
                 })
             if not verses_out:
+                start = i
                 continue
-            if len(block) < CHUNK_SIZE:
+            if block[0].get('verse_number') == block[-1].get('verse_number'):
                 title = f"{name_en} — {name_simple} (complète)" if start == 0 else f"{name_en} — {name_simple} (suite)"
             else:
                 rng = f"{block[0].get('verse_number')}-{block[-1].get('verse_number')}"
                 title = f"{name_en} — {name_simple} {rng}"
             extra.append({"title": title, "verses": verses_out})
+            start = i
         print(f"      Sourate {cid} ({name_simple}) traitée — total additionnel: {len(extra)}/{need}")
 
     try:
@@ -1292,25 +1397,71 @@ def _build_passages_from_api(curated, target_total):
     print(f"   ✅ {len(extra)} passages additionnels générés depuis l'API officielle")
     return extra
 
+def _split_passages_on_gaps(passages):
+    """🔧 FIX "récitation qui saute" : certains passages curatés (et, en théorie,
+    des blocs générés depuis l'API) enchaînent des versets qui NE SE SUIVENT PAS
+    (ex: 49:10 puis 49:13 — les ayat 11 et 12 manquent). À l'écran, ça sonne
+    comme une récitation coupée/montée alors que le but est un enchaînement
+    naturel. On ne perd aucun contenu : on découpe chaque passage en
+    sous-passages qui ne contiennent QUE des ayat consécutives de la MÊME
+    sourate (une même ayah répétée pour un sous-découpage d'affichage, ex.
+    "2:255a"/"2:255b", compte comme consécutive — ce n'est pas un saut).
+    Résultat : chaque vidéo générée récite un bloc ininterrompu, jamais un
+    montage avec des versets manquants au milieu.
+    """
+    result = []
+    for p in passages:
+        verses = p["verses"]
+        if not verses:
+            continue
+        chunks = [[verses[0]]]
+        for prev, cur in zip(verses, verses[1:]):
+            same_surah  = prev["surah"] == cur["surah"]
+            contiguous  = same_surah and (cur["ayah"] == prev["ayah"] or cur["ayah"] == prev["ayah"] + 1)
+            if contiguous:
+                chunks[-1].append(cur)
+            else:
+                chunks.append([cur])
+        if len(chunks) == 1:
+            result.append({"title": p["title"], "verses": chunks[0]})
+        else:
+            for i, ch in enumerate(chunks):
+                result.append({"title": f"{p['title']} ({i+1}/{len(chunks)})", "verses": ch})
+    return result
+
 try:
-    PASSAGES = CURATED_PASSAGES + _build_passages_from_api(CURATED_PASSAGES, TARGET_PASSAGE_CNT)
+    _extra = _build_passages_from_api(CURATED_PASSAGES, TARGET_PASSAGE_CNT)
 except Exception as e:
     print(f"   ⚠ Extension des passages échouée ({e}) — on continue avec les {len(CURATED_PASSAGES)} passages curatés.")
-    PASSAGES = CURATED_PASSAGES
-print(f"   📚 {len(PASSAGES)} passages disponibles au total ({len(CURATED_PASSAGES)} curatés + {len(PASSAGES) - len(CURATED_PASSAGES)} générés)")
+    _extra = []
+_n_curated_before = len(CURATED_PASSAGES)
+_n_extra_before   = len(_extra)
+PASSAGES = _split_passages_on_gaps(CURATED_PASSAGES + _extra)
+_n_after_split = len(PASSAGES) - (_n_curated_before + _n_extra_before)
+if _n_after_split > 0:
+    print(f"   ✂️  {_n_after_split} passage(s) supplémentaire(s) créé(s) en séparant des "
+          f"versets non consécutifs (aucune récitation ne saute plus d'ayah désormais).")
+print(f"   📚 {len(PASSAGES)} passages disponibles au total "
+      f"({_n_curated_before} curatés + {_n_extra_before} générés, "
+      f"{len(PASSAGES)} après découpage anti-saut)")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # RECITATEURS — 21 récitateurs de qualité
 # ═══════════════════════════════════════════════════════════════════════════
 RECITERS = [
-    # 🔧 FIX copyright : "Mishary Rashid Alafasy" (qid 1) retiré du pool.
-    # Ses enregistrements sont enregistrés dans YouTube Content ID avec une
-    # politique "durée maximale" — toute vidéo utilisant plus de quelques
-    # secondes d'affilée de son audio est bloquée automatiquement dans le
-    # monde entier (pas un strike, mais la vidéo reste illisible). Comme ce
-    # script récite des passages complets (bien au-delà de ce seuil), le
-    # blocage était systématique. Les autres récitateurs ci-dessous n'ont pas
-    # ce problème rapporté à ce jour.
+    # 🔙 RÉINTÉGRATION (après baisse de vues + retour aux ~15-18s de récitation) :
+    # Mishary Rashid Alafasy (le récitateur le plus écouté au monde — chaîne
+    # diamant YouTube, extraits à 100M+ vues) avait été retiré du pool car
+    # Content ID le bloquait automatiquement sur les vidéos dépassant quelques
+    # secondes d'affilée de son audio. Les vidéos visaient alors jusqu'à 25s ;
+    # elles visent maintenant ~15-18s (voir TARGET_RECITATION_S) — nettement
+    # sous le seuil probable de déclenchement. Si des blocages Content ID
+    # réapparaissent malgré tout, retirer à nouveau son entrée ci-dessous.
+    # Idem pour Yasser Al-Dosari (le récitateur dont les extraits courts et
+    # très émotionnels sont les plus viraux en format court sur les réseaux) —
+    # jamais testé sur ce pipeline, statut Content ID inconnu, à surveiller.
+    {"name": "Mishary Rashid Alafasy",         "qid": 90,  "ev": "Alafasy_128kbps",              "flag": "🇰🇼"},
+    {"name": "Yasser Al-Dosari",               "qid": 91,  "ev": "Yasser_Ad-Dussary_128kbps",    "flag": "🇸🇦"},
     {"name": "Abdul Rahman Al-Sudais",       "qid": 2,   "ev": "AbdulSamad_128kbps",           "flag": "🇸🇦"},
     {"name": "Saad Al-Ghamdi",               "qid": 3,   "ev": "Saad_Al-Ghamdi_128kbps",       "flag": "🇸🇦"},
     {"name": "Maher Al-Muaiqly",             "qid": 10,  "ev": "MaherAlMuaiqly128kbps",        "flag": "🇸🇦"},
@@ -1406,28 +1557,101 @@ PHOTOS = [
     ("https://images.unsplash.com/photo-1504192010706-dd7f569ee2be?w=1080&h=1920&fit=crop&crop=center", "storm_clouds"),
     # Rivers and lakes
     ("https://images.unsplash.com/photo-1501952476817-5a986dc68ea4?w=1080&h=1920&fit=crop&crop=center", "clear_river"),
+    ("https://images.unsplash.com/photo-1439853949127-fa647821eba0?w=1080&h=1920&fit=crop&crop=center", "flowing_river"),
+    ("https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=1080&h=1920&fit=crop&crop=center", "river_forest"),
+    ("https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=1080&h=1920&fit=crop&crop=center", "river_mist"),
+    ("https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1080&h=1920&fit=crop&crop=center", "river_valley"),
     ("https://images.unsplash.com/photo-1455218873509-8fa753426d7a?w=1080&h=1920&fit=crop&crop=center", "alpine_lake"),
     ("https://images.unsplash.com/photo-1503756234508-e32369269ddb?w=1080&h=1920&fit=crop&crop=center", "turquoise_lake"),
 ]
 
-def _load_font(paths, size):
+def _load_font(paths, size, label=""):
     for p in paths:
         try:
-            # 🖋 Layout RAQM (harfbuzz+fribidi, inclus dans les wheels Pillow
-            # récentes) : indispensable pour un rendu arabe VRAIMENT propre —
-            # jonction correcte des lettres, positionnement des diacritiques
-            # (tashkeel), formes contextuelles. Sans ça, PIL peut afficher les
-            # lettres isolées/mal jointes. Repli silencieux sur le layout basique
-            # si raqm n'est pas disponible sur la machine.
             try:
-                return ImageFont.truetype(p, size, layout_engine=ImageFont.Layout.RAQM)
+                f = ImageFont.truetype(p, size, layout_engine=ImageFont.Layout.RAQM)
             except Exception:
-                return ImageFont.truetype(p, size)
-        except:
-            pass
-    return ImageFont.load_default()
+                f = ImageFont.truetype(p, size)
+            # 🔧 FIX traduction invisible : ImageFont.truetype() peut réussir à
+            # OUVRIR un fichier corrompu/tronqué (ex: install apt interrompue,
+            # téléchargement coupé) sans lever d'exception, puis produire un
+            # texte quasi invisible au rendu. On vérifie donc que la police
+            # chargée produit bien une hauteur de texte cohérente avec la
+            # taille demandée avant de l'accepter — sinon on continue d'essayer
+            # les chemins suivants au lieu de garder une police cassée.
+            bb = f.getbbox("Hgjy")
+            real_h = bb[3] - bb[1]
+            if real_h < size * 0.3:
+                print(f"   ⚠ Police '{label}' ({size}px) : {p} — rendu suspect "
+                      f"(hauteur {real_h}px pour {size}px demandés), essai suivant.")
+                continue
+            print(f"   🖋 Police '{label}' ({size}px) : {p}")
+            return f
+        except Exception as e:
+            print(f"   ⚠ Police '{label}' ({size}px) : {p} — échec ({type(e).__name__}: {e}).")
+    # 🔧 Dernier recours : le Pillow moderne (≥10.1) fournit via load_default(size=…)
+    # une VRAIE police vectorielle (Aileron) qui respecte la taille demandée — ce
+    # n'est plus la minuscule police bitmap fixe des anciennes versions. On la
+    # vérifie quand même avec la même garde-fou, au cas où Pillow serait trop
+    # ancien pour honorer size= (TypeError → bitmap fixe, alors réellement illisible).
+    print(f"   ⚠ Police '{label}' ({size}px) : AUCUN chemin système/téléchargé valide — "
+          f"repli sur la police par défaut de Pillow.")
+    try:
+        f = ImageFont.load_default(size=size)
+        bb = f.getbbox("Hgjy")
+        real_h = bb[3] - bb[1]
+        if real_h < size * 0.3:
+            print(f"   ❌ Police '{label}' : même le repli Pillow est minuscule "
+                  f"({real_h}px pour {size}px) — Pillow est probablement trop ancien "
+                  f"(pip install -U Pillow recommandé). Le texte '{label}' risque "
+                  f"d'être illisible dans la vidéo.")
+        return f
+    except TypeError:
+        print(f"   ❌ Police '{label}' : Pillow trop ancien pour load_default(size=...) — "
+              f"repli sur la police bitmap fixe (texte '{label}' illisible probable). "
+              f"pip install -U Pillow corrigerait ceci.")
+        return ImageFont.load_default()
 
 _FONTS_CACHE = None
+
+def _ensure_web_font(url, cache_name):
+    """🔧 FIX DÉFINITIF traduction invisible : les paquets apt (fonts-liberation,
+    fonts-freefont-ttf, fonts-dejavu-core) sont installés en best-effort dans
+    _ensure_installed() — SANS 'apt-get update' préalable, et toute erreur y est
+    silencieusement avalée (try/except: pass). Sur beaucoup d'environnements
+    (Colab frais, image Docker minimale, cache apt périmé, droits sudo restreints,
+    nom de paquet différent selon la distro...) ces installs peuvent TOUS échouer
+    en silence alors que ffmpeg/Amiri (bloquants, check=True) passent — laissant
+    l'anglais retomber sur ImageFont.load_default(), invisible ou minuscule selon
+    la version de Pillow installée.
+    Ce filet de sécurité ne dépend NI de sudo NI d'apt : un simple téléchargement
+    HTTP direct (le réseau est de toute façon indispensable au script pour
+    l'audio/les images), mis en cache une fois pour toutes comme les photos.
+    Retourne un chemin de fichier local utilisable par ImageFont.truetype, ou
+    None si même ça échoue (repli sur la chaîne apt existante puis load_default).
+    """
+    path = OUT_DIR / "cache" / cache_name
+    if path.exists() and path.stat().st_size > 10_000:
+        return str(path)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=25) as r:
+            data = r.read()
+        if len(data) < 10_000:
+            raise ValueError(f"réponse suspecte ({len(data)} octets, attendu >10ko)")
+        path.write_bytes(data)
+        print(f"   🖋 Police de secours téléchargée : {cache_name} ({len(data)//1024} Ko)")
+        return str(path)
+    except Exception as e:
+        print(f"   ⚠ Téléchargement police de secours '{cache_name}' échoué (non bloquant) : {e}")
+        return None
+
+# Sources Google Fonts (dépôt officiel, brut GitHub — stable, pas d'auth requise).
+# Noto Serif : élégant, lisible, licence OFL. Utilisée UNIQUEMENT en toute dernière
+# position dans les listes ci-dessous — les polices système déjà installées par
+# _ensure_installed() restent toujours prioritaires quand elles sont disponibles.
+_WEBFONT_IT_URL = "https://github.com/google/fonts/raw/main/ofl/notoserif/NotoSerif-Italic.ttf"
+_WEBFONT_RG_URL = "https://github.com/google/fonts/raw/main/ofl/notoserif/NotoSerif-Regular.ttf"
 
 def fonts():
     global _FONTS_CACHE
@@ -1442,22 +1666,33 @@ def fonts():
         IT = [
             "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSerifItalic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",  # 🔧 quasi toujours présent
         ]
         RG = [
             "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",  # 🔧 quasi toujours présent
         ]
+        # 🔧 Filet de sécurité final AVANT load_default() : si aucune police système
+        # n'est trouvée (voir _ensure_web_font ci-dessus), on télécharge une police
+        # garantie plutôt que de risquer une traduction minuscule/invisible.
+        _web_it = _ensure_web_font(_WEBFONT_IT_URL, "font_en_italic.ttf")
+        if _web_it:
+            IT.append(_web_it)
+        _web_rg = _ensure_web_font(_WEBFONT_RG_URL, "font_en_regular.ttf")
+        if _web_rg:
+            RG.append(_web_rg)
         _FONTS_CACHE = {
             # 🔧 FIX esthétique : l'arabe était trop grand (96) et prenait toute
             # la place, repoussant/masquant la traduction anglaise. Réduit à 80
             # + interlignes resserrés (voir draw_arabic_text) pour un bloc plus
             # compact — et l'anglais est agrandi (62→68) pour être bien visible.
-            "ar":      _load_font(AR, 80),
-            "en":      _load_font(IT, 68),
-            "ref":     _load_font(RG, 42),
-            "small":   _load_font(RG, 30),
-            "title":   _load_font(IT, 42),
-            "hook":    _load_font(IT, 72),
+            "ar":      _load_font(AR, 80, "ar"),
+            "en":      _load_font(IT, 56, "en"),
+            "ref":     _load_font(RG, 42, "ref"),
+            "small":   _load_font(RG, 30, "small"),
+            "title":   _load_font(IT, 42, "title"),
+            "hook":    _load_font(IT, 72, "hook"),
         }
     return _FONTS_CACHE
 
@@ -1504,38 +1739,67 @@ ACCENT       = (61, 153, 112)    # accent principal (bande, séparateur, dots)
 ACCENT_BRIGHT= (163, 235, 197)   # menthe claire (accents vifs : dot actif, losange, référence)
 ACCENT_TITLE = (214, 242, 226)   # menthe-crème pâle (titre du passage)
 
-def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, **_unused):
+def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, progress=None, word_windows=None, **_unused):
     """
-    Affiche le verset arabe en entier, de façon propre et statique — une seule
-    couleur chaude et lisible pour tout le verset, avec une ombre portée pour
-    le détacher du fond et une très légère lueur dorée pour le côté soigné.
-    Pas de surlignage mot-à-mot : c'est l'apparition/disparition en fondu de
-    l'écran entier (gérée par l'appelant, calée sur l'audio de CE verset) qui
-    fait "coller" le texte à la récitation, sans effet karaoké.
-    `**_unused` absorbe d'éventuels anciens appels avec progress=/word_windows=
-    pour rester rétro-compatible sans rien casser.
+    Affiche le verset arabe, avec surlignage karaoké mot-à-mot QUAND
+    word_windows est fourni et cohérent avec le texte (issu de l'alignement
+    forcé — voir _align_ayah_words) : tous les mots sont dans la couleur de
+    base (blanc chaud) et seul le mot EN TRAIN d'être prononcé s'illumine
+    (couleur vive + halo) — l'effet est ponctuel, pas cumulatif : dès que le
+    mot suivant commence, le précédent revient à la couleur de base.
+    Si word_windows est absent/invalide (alignement indisponible pour cette
+    ayah) ou si `progress` est None : repli intégral sur l'affichage statique
+    d'origine (une seule couleur pour tout le verset) — jamais d'erreur.
     """
     words = text.split()
     if not words:
         return 0
     lines = _wrap_words(words, font, max_w)
 
+    use_karaoke = (
+        progress is not None and word_windows is not None
+        and len(word_windows) == len(words)
+    )
+    p = max(0.0, min(1.0, progress)) if progress is not None else 0.0
+
+    _AR_COLOR_LIT = (255, 255, 255)  # mot prononcé : blanc pur illuminé (halo plus fort, pas de couleur)
+
     fh      = _line_h(font) + 6
     y       = y_start
     total_h = 0
+    gi      = 0  # index de mot global, dans l'ordre de `words` == ordre de word_windows
     for line in lines:
         line_w = sum(_word_w(font, w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
         x      = cx + line_w // 2
         for _, w, ww in line:
             x -= ww
-            # Lueur douce et discrète (constante, pas animée) derrière le mot
-            glow_a = int(alpha * 0.10)
-            if glow_a > 0:
-                for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
-                    draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_GLOW_COLOR, glow_a))
+            if use_karaoke:
+                w_start, w_end = word_windows[gi]
+                if p >= w_end:
+                    state = "done"
+                elif p >= w_start:
+                    state = "current"
+                else:
+                    state = "pending"
+            else:
+                state = "pending"  # comportement d'origine : tout le verset en blanc de base
+            gi += 1
+
+            if state == "current":
+                # Mot en cours : halo marqué et pulsé — l'instant précis de l'illumination
+                glow_a = int(alpha * 0.45)
+                for dx, dy in [(-3, 0), (3, 0), (0, -3), (0, 3), (-2,-2), (2,-2), (-2,2), (2,2)]:
+                    draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_COLOR_LIT, glow_a))
+            else:
+                # Pas encore prononcé OU déjà prononcé : couleur de base, pas d'illumination
+                glow_a = int(alpha * 0.10)
+                if glow_a > 0:
+                    for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
+                        draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_GLOW_COLOR, glow_a))
             for dx, dy in _SHADOW_OFFSETS:
                 draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
-            draw.text((x, y), w, font=font, fill=(*_AR_COLOR, alpha))
+            fill_color = _AR_COLOR_LIT if state == "current" else _AR_COLOR
+            draw.text((x, y), w, font=font, fill=(*fill_color, alpha))
             x -= WORD_GAP
         y       += fh + line_gap
         total_h += fh + line_gap
@@ -1613,10 +1877,71 @@ def dl_image(url, path):
         print(f"   Image DL: {e}")
         return False
 
+# 🎬 Fonds vidéo (paysages en mouvement réel) — remplace les photos statiques
+# + Ken Burns simulé. Clips Mixkit (licence gratuite, usage commercial/perso
+# autorisé, pas d'attribution requise). URLs vérifiées manuellement.
+VIDEOS = [
+    ("https://assets.mixkit.co/videos/51447/51447-720.mp4", "riviere_foret"),
+    ("https://assets.mixkit.co/videos/43609/43609-720.mp4", "riviere_aerienne"),
+]
+
+class _VideoFrames:
+    """Enveloppe une liste de frames PIL déjà extraites/gradées d'un clip vidéo.
+    ken_burns() la reconnaît et indexe dedans au lieu de faire un pan/zoom —
+    le mouvement vient alors du clip réel, pas d'une simulation."""
+    def __init__(self, frames):
+        self.frames = frames
+    def frame_at(self, t):
+        if not self.frames:
+            return None
+        idx = min(len(self.frames) - 1, max(0, int(t * len(self.frames))))
+        return self.frames[idx]
+
+def dl_video(url, path, timeout=60):
+    if path.exists():
+        return True
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            path.write_bytes(r.read())
+        return True
+    except Exception as e:
+        print(f"   Vidéo DL: {e}")
+        return False
+
+def _extract_video_frames(video_path, n_frames, out_dir):
+    """Extrait exactement n_frames (au FPS de la vidéo finale), recadrées en
+    portrait 1080x1920 (crop centré, cadre rempli). Boucle le clip source si
+    trop court pour couvrir n_frames. Retourne une liste d'images PIL, ou une
+    liste vide en cas d'échec (jamais d'exception qui remonte)."""
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for f in out_dir.glob("*.jpg"):
+            f.unlink()
+        vf = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
+        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(video_path),
+               "-vf", vf, "-frames:v", str(n_frames), "-q:v", "3",
+               str(out_dir / "f_%05d.jpg")]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        files = sorted(out_dir.glob("f_*.jpg"))
+        return [Image.open(str(f)).convert("RGB") for f in files]
+    except Exception as e:
+        print(f"   ⚠ Extraction vidéo échouée ({e}) — repli sur une photo statique.")
+        return []
+
 def cinematic(img, p):
     img = ImageEnhance.Contrast(img).enhance(p["contrast"])
     img = ImageEnhance.Color(img).enhance(p["color_sat"])
     img = ImageEnhance.Brightness(img).enhance(p["brightness"])
+    if p.get("mood") == "mono":
+        # 🎨 Ambiance sombre/désaturée — pas un noir et blanc plat (trop terne
+        # à l'écran), mais un duotone très désaturé avec une légère teinte
+        # émeraude froide dans les ombres, cohérent avec le reste de
+        # l'identité visuelle. Plus de contraste pour un rendu dramatique.
+        gray = ImageEnhance.Color(img).enhance(0.06)
+        gray = ImageEnhance.Contrast(gray).enhance(1.22)
+        tint = Image.new("RGB", (W, H), (24, 34, 30))
+        img  = Image.blend(gray, Image.blend(gray, tint, 0.10), 0.55)
     # Vignette légère uniquement sur les bords — jamais trop sombre au centre
     vign = Image.new("L", (W, H), 0)
     vd   = ImageDraw.Draw(vign)
@@ -1635,7 +1960,20 @@ def cinematic(img, p):
     result = ImageEnhance.Brightness(result).enhance(1.12)
     return result
 
-def get_scene(idx, p):
+def get_scene(idx, p, n_frames=90):
+    # 🎬 Priorité aux vraies vidéos de paysages (mouvement réel) — sur échec
+    # de téléchargement/extraction, repli automatique et silencieux sur
+    # l'ancien système photo + Ken Burns, jamais d'interruption du run.
+    if VIDEOS:
+        vidx = p["video_indices"][idx % len(p["video_indices"])]
+        url, theme = VIDEOS[vidx]
+        cache_mp4 = OUT_DIR / "cache" / f"video_{vidx:03d}.mp4"
+        if dl_video(url, cache_mp4):
+            raw_frames = _extract_video_frames(cache_mp4, n_frames, OUT_DIR / "cache" / f"vframes_{idx:03d}")
+            if raw_frames:
+                graded = [cinematic(f.resize((W, H), Image.LANCZOS), p) for f in raw_frames]
+                return _VideoFrames(graded), theme
+
     real = p["photo_indices"][idx % len(p["photo_indices"])]
     tried = set()
     # Jusqu'à 4 tentatives : si une photo est rejetée (personne détectée) ou
@@ -1665,6 +2003,11 @@ def get_scene(idx, p):
     return cinematic(img, p), "gradient"
 
 def ken_burns(img, t, zoom_end=1.06, pan_x=0., pan_y=0.):
+    if isinstance(img, _VideoFrames):
+        # Le mouvement vient du clip réel : pas de pan/zoom simulé, on
+        # indexe simplement la frame correspondant à la progression t.
+        frame = img.frame_at(t)
+        return frame if frame is not None else Image.new("RGB", (W, H), (20, 20, 20))
     w, h   = img.size
     zoom   = 1. + (zoom_end - 1.) * t
     nw, nh = int(w / zoom), int(h / zoom)
@@ -1682,12 +2025,18 @@ def make_params(n):
         kb.append({"zoom_end": RNG.uniform(1.04, 1.09), "pan_x": dx * RNG.uniform(0.008, 0.022), "pan_y": dy * RNG.uniform(0.008, 0.022)})
     return {
         "photo_indices": RNG.sample(range(len(PHOTOS)), k=min(n, len(PHOTOS))),
+        "video_indices": [RNG.randrange(len(VIDEOS)) for _ in range(n)] if VIDEOS else [],
         "contrast":      RNG.uniform(1.08, 1.18),   # Contraste modéré pour ne pas assombrir
         "color_sat":     RNG.uniform(1.15, 1.35),   # Couleurs bien saturées
         "brightness":    RNG.uniform(0.95, 1.10),   # Toujours lumineux
         "vign":          RNG.uniform(60, 100),       # Vignette très légère
         "xf":            RNG.randint(8, 16),
         "kb":            kb,
+        # 🎨 ~30% des vidéos adoptent une ambiance sombre/désaturée (voir
+        # cinematic()) pour plus de variété émotionnelle — le reste garde le
+        # rendu couleur habituel. Choisi UNE fois par vidéo (pas par scène),
+        # pour rester cohérent du début à la fin.
+        "mood":          RNG.choices(["color", "mono"], weights=[70, 30])[0],
     }
 
 # 🎯 ACCROCHE D'OUVERTURE — les 1-2 premières secondes décident si quelqu'un
@@ -1706,13 +2055,54 @@ HOOK_LINES = [
     "This is for the ones still holding on",
     "Somebody needed to hear this today",
     "When you don't know what to say to Allah...",
+    "Stop scrolling for 15 seconds",
+    "This might be the reminder you prayed for",
+    "If today has been hard...",
+    "Allah sees what you're carrying",
+    "You weren't meant to see this by accident",
+    "For the nights you can't sleep",
+    "When you feel like giving up...",
+    "This is your sign to keep going",
+    "If no one's checked on you today —",
+    "A verse for the heavy hearts",
+    "Before you close the app...",
+    "When your dua feels unanswered...",
+    "This is for you, right now",
+    "If you're overthinking everything today...",
+    "Read slowly. This is for you.",
 ]
-HOOK_DUR      = 1.4
+HOOK_DUR      = 0.0
+# 🔙 Retour au format d'origine (celui qui generait bien plus de vues) : plus
+# de carte d'accroche avant le premier verset — la vidéo démarre directement
+# sur la récitation. HOOK_FRAMES/HOOK_AUDIO_DUR tombent naturellement à 0 ci-
+# dessous, ce qui désactive la boucle de rendu du hook et le silence audio
+# d'ouverture dans mix_audio() sans toucher au reste du pipeline.
 HOOK_FRAMES   = int(round(HOOK_DUR * FPS))
 HOOK_AUDIO_DUR = HOOK_FRAMES / FPS   # 🔧 verrouillé sur le nb de frames réel (zéro dérive, même logique que BREATH_DUR)
 OUTRO_DUR     = 2.0
 OUTRO_FRAMES  = int(round(OUTRO_DUR * FPS))
 OUTRO_AUDIO_DUR = OUTRO_FRAMES / FPS
+
+HOOK_HISTORY_FILE = OUT_DIR / "cache" / "recent_hooks.json"
+HOOK_HISTORY_KEEP = max(1, len(HOOK_LINES) // 2)  # exclut la moitié la plus récente
+
+def _pick_hook():
+    """Choisit une accroche d'ouverture en évitant celles utilisées le plus
+    récemment (persisté entre les runs — voir commentaire d'appel)."""
+    recent = []
+    try:
+        if HOOK_HISTORY_FILE.exists():
+            recent = json.loads(HOOK_HISTORY_FILE.read_text())
+    except Exception:
+        recent = []
+    candidates = [h for h in HOOK_LINES if h not in recent] or list(HOOK_LINES)
+    choice = RNG.choice(candidates)
+    recent = ([choice] + [h for h in recent if h != choice])[:HOOK_HISTORY_KEEP]
+    try:
+        HOOK_HISTORY_FILE.write_text(json.dumps(recent, ensure_ascii=False))
+    except Exception:
+        pass  # non-bloquant : au pire on perd juste la mémoire de rotation
+    return choice
 
 def _decorative_band(d, band_y, a, half_w=None):
     """Bande dorée-émeraude + étoile islamique — factorisée pour être réutilisée
@@ -1837,14 +2227,14 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     en_paragraphs = verse["en"].split("\n")
     en_wrapped    = [_wrap_words(p.split(), f["en"], 940) for p in en_paragraphs]
     en_n_lines    = sum(len(p) for p in en_wrapped) or 1
-    en_h          = en_n_lines * 84   # 🔧 espacement de ligne anglaise, aligné sur le "ly += 84" plus bas
-    block_h   = ar_est_h + 30 + 56 + 40 + en_h   # 🔧 +40 (était 24) : marge nette entre l'arabe et la traduction
+    en_h          = en_n_lines * 70   # espacement de ligne anglaise (police réduite à 56px), aligné sur "ly += 70" plus bas
+    block_h   = ar_est_h + 30 + 56 + 40 + en_h   # +40 : marge nette entre l'arabe et la traduction
     ar_top    = H // 2 - block_h // 2 + 20 + dy_anim
     # 🔒 Garde-fou : quelle que soit la longueur du verset (arabe+traduction),
     # on s'assure que le bas du bloc (dernière ligne de traduction) reste bien
     # visible à l'écran, avec une marge de sécurité — au lieu de laisser un
     # verset exceptionnellement long pousser la traduction hors cadre.
-    max_ar_top = H - 170 - (block_h - 20)  # garde ~170px de marge basse
+    max_ar_top = H - 220 - (block_h - 20)  # garde ~220px de marge basse (zone UI Shorts)
     ar_top     = min(ar_top, max_ar_top)
     ar_top     = max(ar_top, 60)  # et ne remonte jamais au-dessus du haut de l'écran
     mid       = H // 2 + dy_anim
@@ -1939,10 +2329,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     d.text((rx+2, ref_y+3), _clean_ref, font=f["ref"], fill=(0, 0, 0, int(a*0.55)))
     d.text((rx, ref_y), _clean_ref, font=f["ref"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
 
-    # ── 7. Traduction anglaise (fondu légèrement retardé sur l'arabe) ────────
-    # 🔧 FIX : la traduction fondait avec un retard (seuil 0.12) qui pouvait la
-    # laisser invisible plus longtemps que prévu sur les écrans courts — elle
-    # apparaît maintenant en même temps que le reste du texte.
+    # ── 7. Traduction anglaise ────────────────────────────────────────────────
     a_en  = a
     en_y  = ref_y + 64
     li    = 0
@@ -1950,10 +2337,9 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
         for line in para:
             line_w = sum(_word_w(f["en"], w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
             lx = W//2 - line_w // 2
-            ly = en_y + li * 84
+            ly = en_y + li * 70
             x  = lx
             for _, w, ww in line:
-                # Ombre riche
                 for dx, dy in _SHADOW_OFFSETS:
                     d.text((x+dx, ly+dy), w, font=f["en"], fill=(0, 0, 0, min(255, int(a_en*0.55))))
                 d.text((x, ly), w, font=f["en"], fill=(*_EN_COLOR, a_en))
@@ -2056,27 +2442,109 @@ def get_audio_dur(path):
         return 4.5
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ALIGNEMENT FORCÉ MOT-À-MOT (timestamps réels de récitation)
+# ALIGNEMENT FORCÉ MOT-À-MOT (timestamps réels de récitation) — RÉTABLI
 # ═══════════════════════════════════════════════════════════════════════════
-# Contrairement à une transcription libre (Whisper), l'ALIGNEMENT FORCÉ compare
-# l'audio au texte du verset déjà connu à l'avance — beaucoup plus robuste face
-# aux élongations (madd) et à la prononciation tajweed qui perturbent une
-# reconnaissance vocale classique. On utilise ctc-forced-aligner (modèle MMS,
-# multilingue, gère l'arabe). Chargement paresseux : le modèle (~1.2 Go) n'est
-# téléchargé/chargé QUE si cette fonctionnalité est effectivement utilisée, et
-# tout échec (dépendance absente, pas de réseau, mésalignement...) retombe
-# silencieusement sur l'heuristique de longueur de mot (_screen_char_weights)
-# déjà en place — la génération de la vidéo n'est jamais bloquée par ceci.
-# 🔧 SIMPLIFICATION : l'ancien alignement mot-à-mot (modèle ctc-forced-aligner,
-# téléchargé/installé à la volée via pip + torch au premier lancement) servait
-# uniquement à faire "courir" un surlignage doré mot par mot façon karaoké.
-# Cet effet n'est plus voulu : chaque écran affiche désormais son verset
-# complet, de façon propre et statique, pendant toute sa fenêtre audio — ce qui
-# est largement suffisant pour "coller" à la récitation puisque le texte
-# apparaît/disparaît exactement au bon moment (cf. fade in/out synchronisés sur
-# l'audio dans generate()). Supprimer ce sous-système élimine au passage une
-# dépendance lourde et fragile (téléchargement réseau d'un modèle + poids
-# GitHub à la première exécution), qui pouvait échouer ou ralentir un run.
+# 🔙 RÉTABLISSEMENT (après une chute nette des vues) : ce sous-système avait
+# été supprimé pour simplifier/alléger le pipeline (dépendance lourde,
+# ~1.2 Go de modèle, plus fragile sur Colab), remplacé par un affichage
+# statique du verset entier. Constat direct : les vidéos AVEC surlignage
+# karaoké mot-à-mot faisaient nettement plus de vues que celles sans. On le
+# remet donc, mais en gardant EXACTEMENT la même philosophie de robustesse
+# que le reste du fichier : chargement paresseux (le modèle n'est
+# téléchargé/chargé QUE si on arrive ici), et TOUT échec (dépendance
+# absente, pas de réseau, mésalignement, timeout...) retombe silencieusement
+# sur l'heuristique de longueur de mot (_screen_char_weights) déjà en place
+# — la génération d'une vidéo n'est JAMAIS bloquée ni cassée par ceci, au
+# pire on perd juste l'effet karaoké sur CETTE ayah précise.
+#
+# Modèle : ctc-forced-aligner (MMS, multilingue, gère l'arabe) — compare
+# l'audio au texte du verset déjà connu à l'avance, beaucoup plus robuste
+# face aux élongations (madd) et au tajweed qu'une transcription libre
+# (Whisper). pip install fait une seule fois par run (best-effort).
+_ALIGNER = {"tried": False, "model": None, "tokenizer": None, "device": None, "mod": None}
+
+def _get_aligner():
+    """
+    Charge (une seule fois par run) le modèle d'alignement forcé. Retourne
+    None si indisponible pour QUELQUE raison que ce soit — jamais d'exception
+    qui remonte à l'appelant.
+    """
+    if _ALIGNER["tried"]:
+        return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
+    _ALIGNER["tried"] = True
+    try:
+        # 🔧 FIX CRITIQUE : le package PyPI nommé "ctc-forced-aligner" n'est PAS
+        # le bon — c'est un fork tiers (Deskpai) avec une API complètement
+        # différente (AlignmentTorch/generate_srt, pas de load_alignment_model
+        # ni generate_emissions). Le vrai package (MahmoudAshraf97, celui dont
+        # l'API est utilisée ci-dessous) ne s'installe QUE depuis GitHub
+        # directement. Avec le mauvais package, l'import réussissait mais
+        # `load_alignment_model` n'existait pas → échec silencieux, repli
+        # permanent sur l'heuristique, sans jamais aucun karaoké — exactement
+        # le bug remonté. On vérifie donc explicitement la présence de la
+        # bonne fonction avant de faire confiance à un import existant.
+        try:
+            import ctc_forced_aligner as _cfa
+            if not hasattr(_cfa, "load_alignment_model"):
+                raise ImportError("mauvais package 'ctc_forced_aligner' installé (API incompatible)")
+        except ImportError:
+            print("   ⏳ Installation de ctc-forced-aligner depuis GitHub (karaoké mot-à-mot, ~1.2 Go au 1er run)...")
+            subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "ctc-forced-aligner"],
+                            check=False, timeout=60)
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages",
+                             "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"],
+                            check=True, timeout=900)
+            import importlib
+            if "ctc_forced_aligner" in sys.modules:
+                importlib.reload(sys.modules["ctc_forced_aligner"])
+                _cfa = sys.modules["ctc_forced_aligner"]
+            else:
+                import ctc_forced_aligner as _cfa
+            if not hasattr(_cfa, "load_alignment_model"):
+                raise ImportError("toujours pas la bonne API après réinstallation depuis GitHub")
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype  = torch.float16 if device == "cuda" else torch.float32
+        model, tokenizer = _cfa.load_alignment_model(device, dtype=dtype)
+        _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"] = model, tokenizer, device, _cfa
+        print(f"   ✅ Modèle d'alignement chargé ({device}) — karaoké mot-à-mot actif.")
+    except Exception as e:
+        print(f"   ⚠ Alignement forcé indisponible ({e}) — repli sur l'heuristique de longueur de mot, sans karaoké sur cette ayah.")
+        _ALIGNER["model"] = None
+    return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
+
+def _align_ayah_words(audio_path, ar_text, timeout_s=60):
+    """
+    Aligne le texte arabe complet d'une ayah sur son audio. Retourne une liste
+    de (mot, t_start_s, t_end_s) dans le MÊME ORDRE que ar_text.split(), ou
+    None si l'alignement a échoué / le nombre de mots ne correspond pas
+    (mieux vaut aucun karaoké qu'un karaoké désynchronisé).
+    """
+    model, tokenizer, device, cfa = _get_aligner()
+    if model is None:
+        return None
+    words_expected = ar_text.split()
+    if not words_expected:
+        return None
+    try:
+        waveform = cfa.load_audio(str(audio_path), model.dtype, model.device)
+        emissions, stride = cfa.generate_emissions(model, waveform, batch_size=1)
+        tokens_starred, text_starred = cfa.preprocess_text(ar_text, romanize=True, language="ara")
+        segments, scores, blank_id = cfa.get_alignments(emissions, tokens_starred, tokenizer)
+        spans = cfa.get_spans(tokens_starred, segments, blank_id)
+        results = cfa.postprocess_results(text_starred, spans, stride, scores)
+        if len(results) != len(words_expected):
+            print(f"   ⚠ Alignement : {len(results)} mots retournés vs {len(words_expected)} attendus — ignoré (pas de karaoké sur cette ayah).")
+            return None
+        out = []
+        for w_expected, r in zip(words_expected, results):
+            out.append((w_expected, float(r["start"]), float(r["end"])))
+        return out
+    except Exception as e:
+        print(f"   ⚠ Échec alignement sur cette ayah ({e}) — repli sur l'heuristique, sans karaoké ici.")
+        return None
+
+
 def _screen_char_weights(sub_parts):
     """
     Pour une ayah affichée sur plusieurs écrans (ex. Ayat Al-Kursi a→h), répartit
@@ -2091,14 +2559,14 @@ def _screen_char_weights(sub_parts):
     return [char_count(v["ar"]) for v in sub_parts]
 
 def select_verses(passage, reciter):
-    """v10 : TOUS les versets du passage. Chaque écran affiche son texte au
-    complet, de façon statique et propre (plus de surlignage mot-à-mot) — le
-    texte apparaît en fondu dès que la récitation atteint son écran et
-    disparaît en fondu juste avant l'écran suivant, ce qui suffit à bien
-    "coller" à la récitation sans les fragilités d'un alignement mot-à-mot.
+    """v11 : TOUS les versets du passage. Chaque écran affiche son texte, avec
+    surlignage karaoké mot-à-mot QUAND l'alignement forcé réussit pour cette
+    ayah (repli automatique et silencieux sur l'ancien comportement — texte
+    statique, écrans découpés au prorata de la longueur du texte — sinon).
     Les sous-parties d'un même verset (même surah+ayah) partagent UN seul audio ;
-    la durée totale de l'ayah est répartie entre ses écrans au prorata de la
-    longueur du texte de chacun (cf. _screen_char_weights).
+    quand l'alignement réussit, les limites de chaque écran sont calées sur les
+    vraies pauses de la récitation (plutôt qu'une simple proportion de texte) ;
+    sinon on retombe sur _screen_char_weights comme avant.
     """
     sel, audios, aud_durs, frame_counts, word_windows = [], [], [], [], []
 
@@ -2109,8 +2577,8 @@ def select_verses(passage, reciter):
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         ayah_groups.setdefault(key, []).append(verse)
 
-    ayah_audio_cache    = {}  # (s,a,qid) → (audio_path, ad, weights, total_weight)
-    ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés par les sous-parties précédentes
+    ayah_audio_cache    = {}  # (s,a,qid) → dict avec toutes les infos de découpage de cette ayah
+    ayah_weight_before  = {}  # (s,a,qid) → somme des poids déjà consommés (repli sans alignement)
     ayah_subpart_idx    = {}  # (s,a,qid) → index de la prochaine sous-partie dans ayah_groups[key]
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
     cum_recitation_dur  = 0.0  # 🎯 durée cumulée de récitation déjà retenue (hors hook/outro/breath)
@@ -2163,7 +2631,51 @@ def select_verses(passage, reciter):
                 break
             cum_recitation_dur += ad
             weights = _screen_char_weights(ayah_groups[key])
-            ayah_audio_cache[key]   = (audio, ad, weights, sum(weights))
+
+            # ── Tentative d'alignement forcé (karaoké mot-à-mot) ────────────
+            # Texte complet de l'ayah = concaténation ORDONNÉE de ses sous-
+            # parties (c'est ainsi qu'elles ont été construites, cf. plus haut).
+            sub_parts   = ayah_groups[key]
+            full_text   = " ".join(v["ar"] for v in sub_parts)
+            word_counts = [len(v["ar"].split()) for v in sub_parts]
+            aligned     = _align_ayah_words(audio, full_text)  # None si indispo/échec
+
+            subpart_windows      = None  # [(start_s, end_s), ...] par sous-partie, si alignement OK
+            subpart_word_windows = None  # [[(local_start,local_end), ...], ...] par sous-partie
+
+            if aligned is not None:
+                cum_w = [0]
+                for c in word_counts:
+                    cum_w.append(cum_w[-1] + c)
+                subpart_windows, subpart_word_windows = [], []
+                prev_end = 0.0
+                for si in range(len(sub_parts)):
+                    i0, i1 = cum_w[si], cum_w[si + 1]
+                    words_this = aligned[i0:i1]
+                    w_start = prev_end
+                    if si == len(sub_parts) - 1:
+                        w_end = ad  # 🔒 dernière sous-partie : va jusqu'au bout (souffle inclus, jamais coupé)
+                    else:
+                        # Frontière = pile entre la fin de ce groupe de mots et le
+                        # début du suivant (la pause naturelle entre les deux, si
+                        # il y en a une réellement dans la récitation).
+                        this_end   = words_this[-1][2] if words_this else prev_end
+                        next_start = aligned[i1][1] if i1 < len(aligned) else this_end
+                        w_end = max(this_end, min(next_start, ad))
+                    w_end = max(w_start + 0.05, min(w_end, ad))
+                    subpart_windows.append((w_start, w_end))
+                    wd = max(0.001, w_end - w_start)
+                    subpart_word_windows.append([
+                        (max(0., min(1., (ws - w_start) / wd)), max(0., min(1., (we - w_start) / wd)))
+                        for (_, ws, we) in words_this
+                    ])
+                    prev_end = w_end
+                print(f"      {verse['surah']}:{verse['ayah']} — karaoké mot-à-mot actif ({len(aligned)} mots alignés)")
+
+            ayah_audio_cache[key] = {
+                "audio": audio, "ad": ad, "weights": weights, "total_weight": sum(weights),
+                "subpart_windows": subpart_windows, "subpart_word_windows": subpart_word_windows,
+            }
             ayah_weight_before[key] = 0
             ayah_subpart_idx[key]   = 0
             n_screens = len(weights)
@@ -2171,20 +2683,27 @@ def select_verses(passage, reciter):
         else:
             print(f"      {verse['ref']} [même audio {verse['surah']}:{verse['ayah']}]")
 
-        audio, ad, weights, total_weight = ayah_audio_cache[key]
+        cache = ayah_audio_cache[key]
+        audio, ad, weights, total_weight = cache["audio"], cache["ad"], cache["weights"], cache["total_weight"]
         idx  = ayah_subpart_idx[key]
         w    = weights[idx]
         is_last_subpart = (idx == len(weights) - 1)
+        this_word_windows = None
 
-        # ── Fenêtre temporelle de cette sous-partie dans l'audio complet ──────
-        w_before     = ayah_weight_before[key]
-        window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
-        window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
+        if cache["subpart_windows"] is not None:
+            # ── Découpage précis, calé sur l'alignement audio réel ──────────
+            window_start, window_end = cache["subpart_windows"][idx]
+            this_word_windows = cache["subpart_word_windows"][idx]
+        else:
+            # ── Repli : proportion de longueur de texte (comportement d'origine) ──
+            w_before     = ayah_weight_before[key]
+            window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
+            window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
         window_start = max(0.0, min(window_start, ad))
         window_end   = max(window_start + 0.05, min(window_end, ad))
         window_dur   = window_end - window_start
 
-        ayah_weight_before[key] = w_before + w
+        ayah_weight_before[key] = ayah_weight_before[key] + w
         ayah_subpart_idx[key]   = idx + 1
 
         # 🔧 Zéro dérive : le nombre de frames de CHAQUE écran est calculé par
@@ -2206,7 +2725,7 @@ def select_verses(passage, reciter):
         audios.append(audio)
         aud_durs.append(window_dur)
         frame_counts.append(n_audio_frames)
-        word_windows.append(None)  # 🔧 conservé pour compat de signature ; plus de karaoké mot-à-mot
+        word_windows.append(this_word_windows)  # None si pas d'alignement pour cette ayah (repli statique)
 
     # Audio mixé : dédoublonner les fichiers audio (même ayah = même fichier complet)
     seen_audio = []
@@ -2214,7 +2733,8 @@ def select_verses(passage, reciter):
     for verse in sel:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         if key not in seen_keys:
-            audio, ad, _, _ = ayah_audio_cache[key]
+            c = ayah_audio_cache[key]
+            audio, ad = c["audio"], c["ad"]
             seen_audio.append((audio, ad))
             seen_keys.add(key)
 
@@ -2260,9 +2780,12 @@ def mix_audio(audio_list, dur_list, total_dur, lead_silence_dur=0.0, trail_silen
     valid = list(zip(audio_list, dur_list))
     if not valid:
         raise AudioMissingError("mix_audio: aucun audio à mixer.")
-    # Générer un fichier silence .aac de BREATH secondes
+    # Générer un fichier silence .aac de BREATH secondes (seulement si un souffle
+    # est réellement configuré — BREATH_S=0 par défaut désormais, voir plus haut :
+    # aucun fichier de silence n'est créé ni inséré, la récitation s'enchaîne
+    # directement d'un verset au suivant, sans coupure).
     silence_path = OUT_DIR / "cache" / "silence_breath.aac"
-    if not silence_path.exists():
+    if BREATH_DUR > 0.01 and not silence_path.exists():
         # 🔧 FIX : durée du silence = BREATH_DUR (verrouillée sur breath_frames vidéo),
         # pas BREATH brut — garantit zéro dérive audio/vidéo sur les transitions.
         subprocess.run([
@@ -2288,8 +2811,9 @@ def mix_audio(audio_list, dur_list, total_dur, lead_silence_dur=0.0, trail_silen
         inputs += ["-i", str(audio)]
         concat_parts.append(f"[{idx}:a]")
         idx += 1
-        # Silence UNIQUEMENT entre deux ayat successives (pas après la dernière)
-        if vi < len(valid) - 1 and silence_path.exists():
+        # Silence UNIQUEMENT entre deux ayat successives (pas après la dernière),
+        # et seulement si BREATH_DUR > 0 — sinon on enchaîne directement, continu.
+        if vi < len(valid) - 1 and BREATH_DUR > 0.01 and silence_path.exists():
             inputs += ["-i", str(silence_path)]
             concat_parts.append(f"[{idx}:a]")
             idx += 1
@@ -2419,7 +2943,8 @@ def generate(passage_idx=None):
         print("❌ Aucun verset disponible")
         return None
     p      = make_params(n)
-    scenes = [get_scene(i, p) for i in range(n)]
+    _breath_buf = int(round(BREATH * FPS)) + 20  # marge pour transitions/souffle
+    scenes = [get_scene(i, p, n_frames=frame_counts[i] + _breath_buf) for i in range(n)]
     fd = OUT_DIR / "frames"
     for f in fd.glob("*.jpg"):
         f.unlink()
@@ -2438,24 +2963,28 @@ def generate(passage_idx=None):
     total_dur     = total_frames / FPS   # 🔧 durée vidéo recalculée EXACTEMENT depuis le nombre de frames réel (plus de dérive cumulative entre durée déclarée et frames produites)
     print(f"Rendu {total_frames} frames ({total_dur:.1f}s) — {n_breaths} transitions breath...")
 
-    # ── Carte d'accroche (hook) — avant le premier verset ────────────────────
-    hook_text  = RNG.choice(HOOK_LINES)
-    hook_fade  = max(1, int(HOOK_FRAMES * 0.28))
-    hook_scene = scenes[0][0]
-    hook_kb    = p["kb"][0]
-    for fi in range(HOOK_FRAMES):
-        t_h = fi / max(1, HOOK_FRAMES)
-        frame = ken_burns(hook_scene, t_h, **hook_kb)
-        if fi < hook_fade:
-            ha = fi / hook_fade
-        elif fi > HOOK_FRAMES - hook_fade:
-            ha = (HOOK_FRAMES - fi) / hook_fade
-        else:
-            ha = 1.0
-        frame = render_hook_card(frame, hook_text, max(0., ha))
-        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
-        gi += 1
-    print(f"  Accroche « {hook_text} » OK")
+    # ── Carte d'accroche (hook) — DÉSACTIVÉE (HOOK_DUR=0) ─────────────────────
+    # 🔙 Le format qui générait le plus de vues démarrait direct sur le verset,
+    # sans carte d'accroche. On garde le code prêt (au cas où) mais il ne
+    # s'exécute plus tant que HOOK_FRAMES==0.
+    if HOOK_FRAMES > 0:
+        hook_text = _pick_hook()
+        hook_fade  = max(1, int(HOOK_FRAMES * 0.28))
+        hook_scene = scenes[0][0]
+        hook_kb    = p["kb"][0]
+        for fi in range(HOOK_FRAMES):
+            t_h = fi / max(1, HOOK_FRAMES)
+            frame = ken_burns(hook_scene, t_h, **hook_kb)
+            if fi < hook_fade:
+                ha = fi / hook_fade
+            elif fi > HOOK_FRAMES - hook_fade:
+                ha = (HOOK_FRAMES - fi) / hook_fade
+            else:
+                ha = 1.0
+            frame = render_hook_card(frame, hook_text, max(0., ha))
+            frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+            gi += 1
+        print(f"  Accroche « {hook_text} » OK")
 
     for vi in range(n):
         verse   = verses[vi]
