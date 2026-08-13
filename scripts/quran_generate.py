@@ -1460,8 +1460,8 @@ RECITERS = [
     # Idem pour Yasser Al-Dosari (le récitateur dont les extraits courts et
     # très émotionnels sont les plus viraux en format court sur les réseaux) —
     # jamais testé sur ce pipeline, statut Content ID inconnu, à surveiller.
-    {"name": "Mishary Rashid Alafasy",         "qid": 90,  "ev": "Alafasy_128kbps",              "flag": "🇰🇼"},
-    {"name": "Yasser Al-Dosari",               "qid": 91,  "ev": "Yasser_Ad-Dussary_128kbps",    "flag": "🇸🇦"},
+    {"name": "Mishary Rashid Alafasy",         "qid": 90,  "ev": "Alafasy_128kbps",              "flag": "🇰🇼", "weight": 5},
+    {"name": "Yasser Al-Dosari",               "qid": 91,  "ev": "Yasser_Ad-Dussary_128kbps",    "flag": "🇸🇦", "weight": 5},
     {"name": "Abdul Rahman Al-Sudais",       "qid": 2,   "ev": "AbdulSamad_128kbps",           "flag": "🇸🇦"},
     {"name": "Saad Al-Ghamdi",               "qid": 3,   "ev": "Saad_Al-Ghamdi_128kbps",       "flag": "🇸🇦"},
     {"name": "Maher Al-Muaiqly",             "qid": 10,  "ev": "MaherAlMuaiqly128kbps",        "flag": "🇸🇦"},
@@ -1762,7 +1762,13 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
     )
     p = max(0.0, min(1.0, progress)) if progress is not None else 0.0
 
-    _AR_COLOR_LIT = (255, 255, 255)  # mot prononcé : blanc pur illuminé (halo plus fort, pas de couleur)
+    _AR_COLOR_LIT = (255, 255, 255)  # mot prononcé : blanc pur, pleine luminosité
+    _AR_COLOR_BASE_ALPHA = 0.62       # 🔧 FIX illumination invisible : base et "illuminé"
+    # étaient quasiment la même couleur (255,250,235) vs (255,255,255) — aucune
+    # différence perceptible à l'écran. Le contraste vient maintenant de la
+    # LUMINOSITÉ (mots au repos nettement plus sombres/transparents) plutôt
+    # que de la teinte — le mot prononcé "s'allume" real­lement en passant à
+    # pleine opacité + halo fort, tout en restant blanc comme demandé.
 
     fh      = _line_h(font) + 6
     y       = y_start
@@ -1786,12 +1792,12 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
             gi += 1
 
             if state == "current":
-                # Mot en cours : halo marqué et pulsé — l'instant précis de l'illumination
-                glow_a = int(alpha * 0.45)
-                for dx, dy in [(-3, 0), (3, 0), (0, -3), (0, 3), (-2,-2), (2,-2), (-2,2), (2,2)]:
+                # Mot en cours : halo fort et large — c'est LUI qui porte
+                # l'effet d'illumination, la couleur seule ne suffisant pas.
+                glow_a = int(alpha * 0.55)
+                for dx, dy in [(-4,0),(4,0),(0,-4),(0,4),(-3,-3),(3,-3),(-3,3),(3,3),(-6,0),(6,0),(0,-6),(0,6)]:
                     draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_COLOR_LIT, glow_a))
             else:
-                # Pas encore prononcé OU déjà prononcé : couleur de base, pas d'illumination
                 glow_a = int(alpha * 0.10)
                 if glow_a > 0:
                     for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
@@ -1799,7 +1805,8 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
             for dx, dy in _SHADOW_OFFSETS:
                 draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
             fill_color = _AR_COLOR_LIT if state == "current" else _AR_COLOR
-            draw.text((x, y), w, font=font, fill=(*fill_color, alpha))
+            word_alpha = alpha if state == "current" else int(alpha * _AR_COLOR_BASE_ALPHA)
+            draw.text((x, y), w, font=font, fill=(*fill_color, word_alpha))
             x -= WORD_GAP
         y       += fh + line_gap
         total_h += fh + line_gap
@@ -2854,12 +2861,42 @@ def encode(frames_dir, audio_path, total_dur, out_path):
         return False
     return True
 
+def _weighted_shuffle(items, weight_key="weight", default_weight=1):
+    """Mélange pondéré SANS remise : les éléments à poids plus élevé ont plus
+    de chances d'apparaître tôt (donc d'être essayés/choisis en premier), mais
+    RIEN n'est jamais garanti ni exclu — juste plus probable. Contrairement à
+    un simple tri par poids (qui donnerait TOUJOURS le même ordre, donc
+    toujours les mêmes récitateurs en premier), chaque appel donne un ordre
+    différent tout en penchant vers les poids forts — la diversité reste
+    réelle sur la durée."""
+    pool = list(items)
+    weights = [max(0.01, it.get(weight_key, default_weight)) for it in pool]
+    out = []
+    while pool:
+        total = sum(weights)
+        r = RNG.uniform(0, total)
+        acc = 0.0
+        for i, w in enumerate(weights):
+            acc += w
+            if r <= acc:
+                out.append(pool.pop(i))
+                weights.pop(i)
+                break
+        else:
+            out.append(pool.pop())
+            weights.pop()
+    return out
+
 def _select_passage_and_reciter(passage):
     """Essaie tous les récitateurs sur CE passage. Retourne soit le tuple complet
     de select_verses() + le récitateur retenu, soit None si aucun récitateur
     ne fournit un audio complet pour ce passage."""
-    shuffled = RECITERS.copy()
-    RNG.shuffle(shuffled)
+    # 🎯 Priorité (pas exclusivité) aux récitateurs dont le style perce le plus
+    # en format court (Alafasy, Al-Dosari — voir "weight" dans RECITERS) :
+    # ils sont essayés en premier plus souvent, donc choisis plus souvent
+    # (le premier qui réussit gagne), sans jamais écarter les autres — un
+    # mélange pondéré, pas un ordre figé, garde une vraie diversité de voix.
+    shuffled = _weighted_shuffle(RECITERS)
 
     print("Passage: " + passage["title"])
 
