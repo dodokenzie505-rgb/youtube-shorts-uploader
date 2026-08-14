@@ -2267,7 +2267,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     # verset exceptionnellement long pousser la traduction hors cadre.
     max_ar_top = H - 220 - (block_h - 20)  # garde ~220px de marge basse (zone UI Shorts)
     ar_top     = min(ar_top, max_ar_top)
-    ar_top     = max(ar_top, 60)  # et ne remonte jamais au-dessus du haut de l'écran
+    ar_top     = max(ar_top, 100)  # et ne remonte jamais au-dessus du haut de l'écran
     mid       = H // 2 + dy_anim
 
     # ── 1. Fond dégradé central — vignette plus dramatique + teinte bleue-nuit
@@ -2875,9 +2875,9 @@ def mix_audio(audio_list, dur_list, total_dur, lead_silence_dur=0.0, trail_silen
 def encode(frames_dir, audio_path, total_dur, out_path):
     cmd = ["ffmpeg","-y","-framerate",str(FPS),"-start_number","0","-i",str(frames_dir/"frame_%06d.jpg")]
     if audio_path and Path(audio_path).exists():
-        cmd += ["-i",str(audio_path),"-c:v","libx264","-preset","fast","-crf","18","-c:a","aac","-b:a","192k","-t",str(total_dur),"-shortest"]
+        cmd += ["-i",str(audio_path),"-c:v","libx264","-preset","fast","-crf","18","-maxrate","10M","-bufsize","20M","-c:a","aac","-b:a","192k","-t",str(total_dur),"-shortest"]
     else:
-        cmd += ["-c:v","libx264","-preset","fast","-crf","18","-t",str(total_dur)]
+        cmd += ["-c:v","libx264","-preset","fast","-crf","18","-maxrate","10M","-bufsize","20M","-t",str(total_dur)]
     cmd += ["-pix_fmt","yuv420p","-movflags","+faststart",str(out_path)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -3117,8 +3117,8 @@ def generate(passage_idx=None):
         print(f"  Verset {vi+1} OK")
 
     # ── Carte de fermeture (outro CTA) — après le dernier verset ─────────────
-    outro_scene = scenes[-1][0]
-    outro_kb    = p["kb"][-1]
+    outro_scene = scenes[0][0]
+    outro_kb    = p["kb"][0]
     outro_fade  = max(1, int(OUTRO_FRAMES * 0.22))
     for fi in range(OUTRO_FRAMES):
         t_o = fi / max(1, OUTRO_FRAMES)
@@ -3215,7 +3215,7 @@ if __name__ == "__main__":
             'ffmpeg', '-y', '-i', src_path,
             '-c:v', 'libx264', '-profile:v', 'high', '-level', '4.0',
             '-preset', 'fast', '-crf', '18', '-vf', 'scale=1080:1920',
-            '-r', '30', '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+            '-r', '30', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000',
             '-movflags', '+faststart', '-pix_fmt', 'yuv420p', yt
         ])
         print(f'✅ Vidéo YouTube prête : {yt}')
