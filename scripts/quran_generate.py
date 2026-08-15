@@ -1914,6 +1914,26 @@ VIDEOS = [
     ("https://assets.mixkit.co/videos/4119/4119-360.mp4", "coucher_soleil_mer"),
     ("https://assets.mixkit.co/videos/4998/4998-360.mp4", "lac_coucher_soleil_aerien"),
     ("https://assets.mixkit.co/videos/3128/3128-360.mp4", "montagnes_coucher_soleil"),
+    # 🕌 Mosquées / architecture islamique — piste confirmée par la recherche :
+    # ces visuels résonnent aussi bien que les paysages nature purs pour ce
+    # type de contenu. Tous sans personnes visibles (cohérent avec le filtre
+    # "paysages uniquement" déjà appliqué aux photos).
+    ("https://assets.mixkit.co/videos/39179/39179-360.mp4", "mosquee_salon_elegant"),
+    ("https://assets.mixkit.co/videos/11922/11922-360.mp4", "mosquee_drone_survol"),
+    ("https://assets.mixkit.co/videos/34251/34251-360.mp4", "mosquee_tapis_salon"),
+    ("https://assets.mixkit.co/videos/9595/9595-360.mp4", "mosquee_colline_nuageuse"),
+    ("https://assets.mixkit.co/videos/39195/39195-360.mp4", "mosquee_bosphore_aerien"),
+    ("https://assets.mixkit.co/videos/4312/4312-360.mp4", "mosquee_nuit"),
+    ("https://assets.mixkit.co/videos/17255/17255-360.mp4", "mosquee_lumieres_nuit"),
+    ("https://assets.mixkit.co/videos/34295/34295-360.mp4", "mosquee_ville_survol"),
+    ("https://assets.mixkit.co/videos/39184/39184-360.mp4", "mosquee_lustres_salon"),
+    ("https://assets.mixkit.co/videos/9885/9885-360.mp4", "mosquee_marina_mer"),
+    ("https://assets.mixkit.co/videos/9799/9799-360.mp4", "mosquee_nuages_montagne"),
+    ("https://assets.mixkit.co/videos/9736/9736-360.mp4", "mosquee_au_dessus_nuages"),
+    ("https://assets.mixkit.co/videos/9739/9739-360.mp4", "batiment_islamique_montagne"),
+    ("https://assets.mixkit.co/videos/9805/9805-360.mp4", "mosquee_ambiance_montagne"),
+    ("https://assets.mixkit.co/videos/35350/35350-360.mp4", "mosquee_ville_aerien"),
+    ("https://assets.mixkit.co/videos/9760/9760-360.mp4", "mosquee_village_rural"),
 ]
 
 class _VideoFrames:
@@ -1943,13 +1963,18 @@ def dl_video(url, path, timeout=60):
 def _extract_video_frames(video_path, n_frames, out_dir):
     """Extrait exactement n_frames (au FPS de la vidéo finale), recadrées en
     portrait 1080x1920 (crop centré, cadre rempli). Boucle le clip source si
-    trop court pour couvrir n_frames. Retourne une liste d'images PIL, ou une
-    liste vide en cas d'échec (jamais d'exception qui remonte)."""
+    trop court pour couvrir n_frames. Le clip est ralenti (setpts) avant
+    extraction — beaucoup de b-roll (survols aériens, vagues) est filmé à
+    vitesse réelle, qui parait rapide/agitée une fois recadrée en gros plan
+    portrait ; ralentir donne un défilement doux et cinématique plutôt que
+    saccadé. Retourne une liste d'images PIL, ou une liste vide en cas
+    d'échec (jamais d'exception qui remonte)."""
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in out_dir.glob("*.jpg"):
             f.unlink()
-        vf = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
+        SLOWDOWN = 1.8  # 🐢 clip lu à ~55% de sa vitesse d'origine
+        vf = f"setpts={SLOWDOWN}*PTS,scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
         cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(video_path),
                "-vf", vf, "-frames:v", str(n_frames), "-q:v", "3",
                str(out_dir / "f_%05d.jpg")]
@@ -2048,15 +2073,69 @@ def ken_burns(img, t, zoom_end=1.06, pan_x=0., pan_y=0.):
     t2 = max(0, cy - nh // 2)
     return img.crop((l, t2, min(w, l+nw), min(h, t2+nh))).resize((w, h), Image.LANCZOS)
 
-def make_params(n):
+# 🎯 Thème du fond en rapport avec le verset — plutôt qu'un tirage aléatoire
+# pur. On associe des mots-clés du TITRE du passage (déjà thématique en
+# anglais, ex. "Divine Mercy", "Patience and Hope") à des étiquettes de
+# scènes (VIDEOS/PHOTOS ont toutes une étiquette thème, ex. "storm_clouds",
+# "mosquee_lumieres_nuit"). Repli intégral sur un tirage aléatoire si aucun
+# mot-clé ne correspond — jamais bloquant, juste une préférence.
+_THEME_KEYWORDS = {
+    ("hardship","trial","struggle","steadfast","test","difficult"): [
+        "storm_clouds","ocean_waves","rocky_coast","canyon_red","canyon_vegetation",
+        "vagues_rocher_aerien","montagne_rocheuse_neige","brume_montagnes_neige"],
+    ("mercy","hope","forgiveness","comfort","peace","heart","gratitude","reassured"): [
+        "sunset_orange","golden_lake","calm_ocean","alpine_meadow","lac_coucher_soleil_aerien",
+        "panorama_vert_aerien","soleil_collines","golden_mountain","turquoise_lake"],
+    ("greatness","creation","power","throne","glorif","signs","sovereignty","knowledge"): [
+        "mountain_range","milky_way_mountain","aurora_borealis","alpes_montagnes",
+        "chaine_montagnes","mosquee_drone_survol","mosquee_bosphore_aerien","starry_sky"],
+    ("judgment","resurrection","warning","hellfire","earthquake","reality","fire","punishment"): [
+        "storm_clouds","matterhorn_nuit_etoiles","dramatic_sky","canyon_red",
+        "montagnes_coucher_soleil","mosquee_nuit"],
+    ("paradise","garden","reward","river","abundance","fruit"): [
+        "clear_river","flowing_river","river_forest","river_valley","turquoise_lake",
+        "cascade_collines","riviere_foret","riviere_aerienne"],
+    ("prayer","mosque","dhikr","remembrance","worship","friday","night prayer"): [
+        "mosquee_salon_elegant","mosquee_lustres_salon","mosquee_tapis_salon",
+        "mosquee_ville_survol","mosquee_ville_aerien","mosquee_village_rural"],
+    ("dawn","morning","light","guidance","daybreak"): [
+        "sunrise_lake","golden_mountain","mosquee_lumieres_nuit","soleil_collines",
+        "palmiers_coucher_soleil","dramatic_sky"],
+}
+
+def _matched_themes(passage):
+    text = passage.get("title", "").lower()
+    matched = set()
+    for keywords, themes in _THEME_KEYWORDS.items():
+        if any(kw in text for kw in keywords):
+            matched.update(themes)
+    return matched
+
+def make_params(n, passage=None):
     directions = [(+1,0),(-1,0),(0,+1),(0,-1)]
     kb = []
     for _ in range(n):
         dx, dy = RNG.choice(directions)
-        kb.append({"zoom_end": RNG.uniform(1.04, 1.09), "pan_x": dx * RNG.uniform(0.008, 0.022), "pan_y": dy * RNG.uniform(0.008, 0.022)})
+        kb.append({"zoom_end": RNG.uniform(1.02, 1.05), "pan_x": dx * RNG.uniform(0.004, 0.011), "pan_y": dy * RNG.uniform(0.004, 0.011)})
+
+    matched = _matched_themes(passage) if passage else set()
+    video_pool = [i for i, (_, th) in enumerate(VIDEOS) if th in matched] if VIDEOS else []
+    photo_pool = [i for i, (_, th) in enumerate(PHOTOS) if th in matched]
+
+    def _themed_indices(pool, full_len, k):
+        # 75% des scènes tirées du pool thématique (si non vide), 25% au hasard
+        # dans tout le catalogue — garde un lien avec le verset sans rendre
+        # chaque vidéo du même thème visuellement identique.
+        if not pool or full_len == 0:
+            return [RNG.randrange(full_len) for _ in range(k)] if full_len else []
+        out = []
+        for _ in range(k):
+            out.append(RNG.choice(pool) if RNG.random() < 0.75 else RNG.randrange(full_len))
+        return out
+
     return {
-        "photo_indices": RNG.sample(range(len(PHOTOS)), k=min(n, len(PHOTOS))),
-        "video_indices": [RNG.randrange(len(VIDEOS)) for _ in range(n)] if VIDEOS else [],
+        "photo_indices": _themed_indices(photo_pool, len(PHOTOS), n) if photo_pool else RNG.sample(range(len(PHOTOS)), k=min(n, len(PHOTOS))),
+        "video_indices": _themed_indices(video_pool, len(VIDEOS), n) if VIDEOS else [],
         "contrast":      RNG.uniform(1.08, 1.18),   # Contraste modéré pour ne pas assombrir
         "color_sat":     RNG.uniform(1.15, 1.35),   # Couleurs bien saturées
         "brightness":    RNG.uniform(0.95, 1.10),   # Toujours lumineux
@@ -2265,9 +2344,9 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     # on s'assure que le bas du bloc (dernière ligne de traduction) reste bien
     # visible à l'écran, avec une marge de sécurité — au lieu de laisser un
     # verset exceptionnellement long pousser la traduction hors cadre.
-    max_ar_top = H - 220 - (block_h - 20)  # garde ~220px de marge basse (zone UI Shorts)
+    max_ar_top = H - 380 - (block_h - 20)  # garde ~380px de marge basse (spec officielle safe-zone Shorts)
     ar_top     = min(ar_top, max_ar_top)
-    ar_top     = max(ar_top, 100)  # et ne remonte jamais au-dessus du haut de l'écran
+    ar_top     = max(ar_top, 100)  # et ne remonte jamais trop haut (marge sécurité 100px)
     mid       = H // 2 + dy_anim
 
     # ── 1. Fond dégradé central — vignette plus dramatique + teinte bleue-nuit
@@ -2877,7 +2956,7 @@ def encode(frames_dir, audio_path, total_dur, out_path):
     if audio_path and Path(audio_path).exists():
         cmd += ["-i",str(audio_path),"-c:v","libx264","-preset","fast","-crf","18","-maxrate","10M","-bufsize","20M","-c:a","aac","-b:a","192k","-t",str(total_dur),"-shortest"]
     else:
-        cmd += ["-c:v","libx264","-preset","fast","-crf","18","-maxrate","10M","-bufsize","20M","-t",str(total_dur)]
+        cmd += ["-c:v","libx264","-preset","fast","-crf","18","-t",str(total_dur)]
     cmd += ["-pix_fmt","yuv420p","-movflags","+faststart",str(out_path)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
@@ -3003,7 +3082,7 @@ def generate(passage_idx=None):
     if n == 0:
         print("❌ Aucun verset disponible")
         return None
-    p      = make_params(n)
+    p      = make_params(n, passage)
     _breath_buf = int(round(BREATH * FPS)) + 20  # marge pour transitions/souffle
     scenes = [get_scene(i, p, n_frames=frame_counts[i] + _breath_buf) for i in range(n)]
     fd = OUT_DIR / "frames"
@@ -3055,8 +3134,8 @@ def generate(passage_idx=None):
         n_audio_frames = frame_counts[vi]
         ww_v    = word_windows[vi]   # timing réel des mots pour cet écran, ou None (repli heuristique)
         # Frames pendant la récitation (son actif)
-        fade_in  = max(1, int(FPS * 0.55))
-        fade_out = max(1, int(FPS * 0.45))
+        fade_in  = max(1, int(FPS * 0.75))
+        fade_out = max(1, int(FPS * 0.65))
         next_sc  = scenes[vi+1][0] if vi < n-1 else None
         next_kb  = p["kb"][vi+1]   if vi < n-1 else None
         n_words  = len(verse["ar"].split())
@@ -3118,7 +3197,7 @@ def generate(passage_idx=None):
 
     # ── Carte de fermeture (outro CTA) — après le dernier verset ─────────────
     outro_scene = scenes[0][0]
-    outro_kb    = p["kb"][0]
+    outro_kb    = p["kb"][-1]
     outro_fade  = max(1, int(OUTRO_FRAMES * 0.22))
     for fi in range(OUTRO_FRAMES):
         t_o = fi / max(1, OUTRO_FRAMES)
@@ -3156,13 +3235,34 @@ def generate(passage_idx=None):
         # à connaître le nom exact du fichier vidéo généré.
         ref_first = verses[0]["ref"]
         ref_last  = verses[-1]["ref"]
+        # 🎯 Hashtags suggérés : jusqu'ici seul "#Shorts" était utilisé à
+        # l'upload (voir capture d'écran) — les 3 hashtags les plus forts
+        # doivent apparaître dans les 2-3 premières lignes de la description
+        # (c'est ce qui compte le plus pour le référencement), et le titre
+        # doit placer le mot-clé principal dans les 40 premiers caractères.
+        # Un noyau fixe assure la cohérence de marque du compte, complété par
+        # une rotation de tags de niche pour ne pas être identique à chaque
+        # vidéo. daily_upload.py peut lire ces champs s'ils existent.
+        _HASHTAG_POOL = ["#QuranQuotes", "#QuranRecitation", "#DailyDua",
+                          "#Deen", "#Dua", "#Ummah", "#MuslimReminder", "#Sabr"]
+        hashtags = ["#Shorts", "#IslamicShorts", "#IslamicReminder"] + RNG.sample(_HASHTAG_POOL, k=3)
+        # Titre pré-formaté : mot-clé principal en premier (référencement),
+        # référence du verset ensuite — reste sous ~40 caractères visibles.
+        suggested_title = f"{passage['title']} | Quran {ref_first}"
+        # Commentaire à épingler : une question engageante fait pause le
+        # défilement automatique et augmente le temps de visionnage total —
+        # signal positif pour l'algo, constaté sur les comptes performants.
+        suggested_pinned_comment = "Which part of this verse spoke to you today? 🤍"
         meta = {
             "title": passage["title"],            # ex: "Patience and Hope"
+            "suggested_title": suggested_title,
+            "suggested_pinned_comment": suggested_pinned_comment,
             "video_path": str(out),
             "surah_range": f"{ref_first} - {ref_last}",
             "reciter": reciter["name"],
             "n_verses": n,
             "duration_s": round(total_dur, 1),
+            "hashtags": hashtags,
             "generated_at": datetime.datetime.now().isoformat(),
         }
         try:
