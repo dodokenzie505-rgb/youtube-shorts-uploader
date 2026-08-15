@@ -1658,6 +1658,51 @@ def _ensure_web_font(url, cache_name):
 _WEBFONT_IT_URL = "https://github.com/google/fonts/raw/main/ofl/notoserif/NotoSerif-Italic.ttf"
 _WEBFONT_RG_URL = "https://github.com/google/fonts/raw/main/ofl/notoserif/NotoSerif-Regular.ttf"
 
+# 📖 Noms des 114 sourates : (translittération, nom arabe) — utilisés pour
+# afficher "Surah <nom>" en bas de l'écran, comme repère de navigation
+# familier pour quiconque lit le Coran (numéro de sourate seul ne parle à
+# personne, le nom si).
+SURAH_NAMES = {
+    1: ("Al-Fatihah", "الفاتحة"), 2: ("Al-Baqarah", "البقرة"), 3: ("Aali Imran", "آل عمران"),
+    4: ("An-Nisa", "النساء"), 5: ("Al-Ma'idah", "المائدة"), 6: ("Al-An'am", "الأنعام"),
+    7: ("Al-A'raf", "الأعراف"), 8: ("Al-Anfal", "الأنفال"), 9: ("At-Tawbah", "التوبة"),
+    10: ("Yunus", "يونس"), 11: ("Hud", "هود"), 12: ("Yusuf", "يوسف"),
+    13: ("Ar-Ra'd", "الرعد"), 14: ("Ibrahim", "إبراهيم"), 15: ("Al-Hijr", "الحجر"),
+    16: ("An-Nahl", "النحل"), 17: ("Al-Isra", "الإسراء"), 18: ("Al-Kahf", "الكهف"),
+    19: ("Maryam", "مريم"), 20: ("Ta-Ha", "طه"), 21: ("Al-Anbya", "الأنبياء"),
+    22: ("Al-Hajj", "الحج"), 23: ("Al-Mu'minun", "المؤمنون"), 24: ("An-Nur", "النور"),
+    25: ("Al-Furqan", "الفرقان"), 26: ("Ash-Shu'ara", "الشعراء"), 27: ("An-Naml", "النمل"),
+    28: ("Al-Qasas", "القصص"), 29: ("Al-Ankabut", "العنكبوت"), 30: ("Ar-Rum", "الروم"),
+    31: ("Luqman", "لقمان"), 32: ("As-Sajdah", "السجدة"), 33: ("Al-Ahzab", "الأحزاب"),
+    34: ("Saba", "سبأ"), 35: ("Fatir", "فاطر"), 36: ("Ya-Sin", "يس"),
+    37: ("As-Saffat", "الصافات"), 38: ("Sad", "ص"), 39: ("Az-Zumar", "الزمر"),
+    40: ("Ghafir", "غافر"), 41: ("Fussilat", "فصلت"), 42: ("Ash-Shura", "الشورى"),
+    43: ("Az-Zukhruf", "الزخرف"), 44: ("Ad-Dukhan", "الدخان"), 45: ("Al-Jathiyah", "الجاثية"),
+    46: ("Al-Ahqaf", "الأحقاف"), 47: ("Muhammad", "محمد"), 48: ("Al-Fath", "الفتح"),
+    49: ("Al-Hujurat", "الحجرات"), 50: ("Qaf", "ق"), 51: ("Adh-Dhariyat", "الذاريات"),
+    52: ("At-Tur", "الطور"), 53: ("An-Najm", "النجم"), 54: ("Al-Qamar", "القمر"),
+    55: ("Ar-Rahman", "الرحمن"), 56: ("Al-Waqi'ah", "الواقعة"), 57: ("Al-Hadid", "الحديد"),
+    58: ("Al-Mujadilah", "المجادلة"), 59: ("Al-Hashr", "الحشر"), 60: ("Al-Mumtahanah", "الممتحنة"),
+    61: ("As-Saff", "الصف"), 62: ("Al-Jumu'ah", "الجمعة"), 63: ("Al-Munafiqun", "المنافقون"),
+    64: ("At-Taghabun", "التغابن"), 65: ("At-Talaq", "الطلاق"), 66: ("At-Tahrim", "التحريم"),
+    67: ("Al-Mulk", "الملك"), 68: ("Al-Qalam", "القلم"), 69: ("Al-Haqqah", "الحاقة"),
+    70: ("Al-Ma'arij", "المعارج"), 71: ("Nuh", "نوح"), 72: ("Al-Jinn", "الجن"),
+    73: ("Al-Muzzammil", "المزمل"), 74: ("Al-Muddaththir", "المدثر"), 75: ("Al-Qiyamah", "القيامة"),
+    76: ("Al-Insan", "الإنسان"), 77: ("Al-Mursalat", "المرسلات"), 78: ("An-Naba", "النبأ"),
+    79: ("An-Nazi'at", "النازعات"), 80: ("Abasa", "عبس"), 81: ("At-Takwir", "التكوير"),
+    82: ("Al-Infitar", "الانفطار"), 83: ("Al-Mutaffifin", "المطففين"), 84: ("Al-Inshiqaq", "الانشقاق"),
+    85: ("Al-Buruj", "البروج"), 86: ("At-Tariq", "الطارق"), 87: ("Al-A'la", "الأعلى"),
+    88: ("Al-Ghashiyah", "الغاشية"), 89: ("Al-Fajr", "الفجر"), 90: ("Al-Balad", "البلد"),
+    91: ("Ash-Shams", "الشمس"), 92: ("Al-Layl", "الليل"), 93: ("Ad-Duha", "الضحى"),
+    94: ("Ash-Sharh", "الشرح"), 95: ("At-Tin", "التين"), 96: ("Al-Alaq", "العلق"),
+    97: ("Al-Qadr", "القدر"), 98: ("Al-Bayyinah", "البينة"), 99: ("Az-Zalzalah", "الزلزلة"),
+    100: ("Al-Adiyat", "العاديات"), 101: ("Al-Qari'ah", "القارعة"), 102: ("At-Takathur", "التكاثر"),
+    103: ("Al-Asr", "العصر"), 104: ("Al-Humazah", "الهمزة"), 105: ("Al-Fil", "الفيل"),
+    106: ("Quraysh", "قريش"), 107: ("Al-Ma'un", "الماعون"), 108: ("Al-Kawthar", "الكوثر"),
+    109: ("Al-Kafirun", "الكافرون"), 110: ("An-Nasr", "النصر"), 111: ("Al-Masad", "المسد"),
+    112: ("Al-Ikhlas", "الإخلاص"), 113: ("Al-Falaq", "الفلق"), 114: ("An-Nas", "الناس"),
+}
+
 def fonts():
     global _FONTS_CACHE
     if _FONTS_CACHE is None:
@@ -1698,6 +1743,17 @@ def fonts():
             "small":   _load_font(RG, 30, "small"),
             "title":   _load_font(IT, 42, "title"),
             "hook":    _load_font(IT, 72, "hook"),
+            # 🕌 Chiffre arabo-indien du médaillon fin-de-verset : on utilise la
+            # VRAIE police coranique (Scheherazade/Amiri, via AR) plutôt que la
+            # police latine "small" — les chiffres arabo-indiens y sont dessinés
+            # avec le même style calligraphique que le verset, beaucoup plus
+            # fidèle au rendu d'un vrai Mushaf qu'un chiffre en police latine.
+            "ayah_num": _load_font(AR, 34, "ayah_num"),
+            # 🕌 Nom de sourate en bas d'écran : arabe dans la police coranique,
+            # translittération dans la police "title" (italique élégante, déjà
+            # utilisée pour l'accroche thématique en haut — cohérence visuelle).
+            "surah_ar": _load_font(AR, 46, "surah_ar"),
+            "surah_en": _load_font(IT, 32, "surah_en"),
         }
     return _FONTS_CACHE
 
@@ -1744,7 +1800,30 @@ ACCENT       = (61, 153, 112)    # accent principal (bande, séparateur, dots)
 ACCENT_BRIGHT= (163, 235, 197)   # menthe claire (accents vifs : dot actif, losange, référence)
 ACCENT_TITLE = (214, 242, 226)   # menthe-crème pâle (titre du passage)
 
-def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, progress=None, word_windows=None, **_unused):
+def _draw_ayah_medallion(draw, cx, cy, ayah_num, alpha, num_font, r=24):
+    """
+    🕌 Médaillon ornemental façon "fin de verset" (۝) du Coran — rosette à
+    12 pointes avec le numéro de l'ayah en chiffres arabo-indiens au centre,
+    dessinée dans la police coranique elle-même (voir fonts()["ayah_num"])
+    pour un rendu fidèle au vrai Mushaf plutôt qu'un chiffre latin plaqué.
+    (cx, cy) = CENTRE du médaillon (pas le coin).
+    """
+    _AR_DIGITS = "٠١٢٣٤٥٦٧٨٩"
+    ayah_ar = "".join(_AR_DIGITS[int(c)] for c in str(ayah_num) if c.isdigit())
+    for i in range(12):
+        angle = math.pi * i / 6
+        tip_r = r + 5
+        tx1, ty1 = cx + r * math.cos(angle), cy + r * math.sin(angle)
+        tx2, ty2 = cx + tip_r * math.cos(angle), cy + tip_r * math.sin(angle)
+        draw.line([(tx1, ty1), (tx2, ty2)], fill=(*ACCENT, int(alpha * 0.75)), width=2)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(*ACCENT_BRIGHT, int(alpha * 0.9)), width=2)
+    bb = num_font.getbbox(ayah_ar)
+    dw, dh = bb[2] - bb[0], bb[3] - bb[1]
+    draw.text((cx - dw // 2 - bb[0], cy - dh // 2 - bb[1] - dh // 6), ayah_ar,
+              font=num_font, fill=(*ACCENT_BRIGHT, int(alpha * 0.95)))
+
+def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, progress=None, word_windows=None,
+                      is_ayah_end=False, ayah_num=None, num_font=None, **_unused):
     """
     Affiche le verset arabe, avec surlignage karaoké mot-à-mot QUAND
     word_windows est fourni et cohérent avec le texte (issu de l'alignement
@@ -1813,11 +1892,24 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
             word_alpha = alpha if state == "current" else int(alpha * _AR_COLOR_BASE_ALPHA)
             draw.text((x, y), w, font=font, fill=(*fill_color, word_alpha))
             x -= WORD_GAP
+        is_last_line = (line is lines[-1])
+        if is_last_line and is_ayah_end and ayah_num is not None:
+            # 🕌 Symbole de fin de verset (۝ + numéro) juste APRÈS le dernier
+            # mot arabe — `x` ici est déjà positionné à gauche du dernier mot
+            # (flux RTL), exactement là où le Mushaf place ce signe. N'apparaît
+            # QUE si ce verset affiché est bien la fin réelle de l'ayah (jamais
+            # au milieu d'une ayah découpée en plusieurs écrans).
+            med_r  = int(font.size * 0.24) if hasattr(font, "size") else 20
+            med_cy = y + fh // 2 - 4
+            med_cx = x - med_r - 6
+            _draw_ayah_medallion(draw, med_cx, med_cy, ayah_num, alpha,
+                                  num_font or font, r=med_r)
         y       += fh + line_gap
         total_h += fh + line_gap
     return total_h
 
-def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alpha):
+def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alpha,
+                     is_ayah_end=False, ayah_num=None, num_font=None):
     """
     Mode "mot par mot" : affiche UNIQUEMENT le mot en cours de récitation,
     centré — pas le verset entier. Chaque mot apparaît avec un simple fondu
@@ -1826,6 +1918,9 @@ def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alph
     `word_windows` : liste de (start_frac, end_frac) locaux à l'écran, un par
     mot de `words`, dans le même ordre — voir _align_ayah_words(). Suppose
     que l'appelant a déjà vérifié la cohérence (même longueur que `words`).
+    Quand `is_ayah_end` et que le mot affiché est le DERNIER de l'ayah, le
+    symbole de fin de verset (۝ + numéro) apparaît juste à côté, comme dans
+    le Mushaf.
     """
     p = max(0.0, min(1.0, progress))
     gi = 0
@@ -1860,6 +1955,15 @@ def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alph
     for dx, dy in _SHADOW_OFFSETS:
         draw.text((x + dx, y + dy), word, font=font, fill=(0, 0, 0, min(word_alpha, 150)))
     draw.text((x, y), word, font=font, fill=(255, 255, 255, word_alpha))
+
+    if is_ayah_end and ayah_num is not None and gi == len(words) - 1:
+        # 🕌 Dernier mot de l'ayah affiché : symbole de fin de verset juste à
+        # sa gauche (flux RTL — "après" le mot en lecture arabe).
+        med_r  = int(font.size * 0.22) if hasattr(font, "size") else 18
+        med_cy = y + fh // 2
+        med_cx = x - med_r - 8
+        _draw_ayah_medallion(draw, med_cx, med_cy, ayah_num, word_alpha,
+                              num_font or font, r=med_r)
     return fh + 30
 
 _PERSON_DETECTORS = {"loaded": False, "face": None, "hog": None}
@@ -2529,16 +2633,23 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
 
     # ── 4. Verset arabe — un seul mot affiché à la fois (mode "mot par mot"),
     # avec repli sur le verset entier si l'alignement n'est pas disponible ──
+    # 🕌 Fin de verset façon Mushaf : le symbole ۝ + numéro n'apparaît que
+    # lorsque cet écran affiche bien la DERNIÈRE sous-partie de l'ayah réelle
+    # (voir "_is_ayah_end", posé dans select_verses) — jamais au milieu d'une
+    # ayah découpée en plusieurs écrans.
+    is_ayah_end = bool(verse.get("_is_ayah_end", False))
     if use_word_focus:
         ar_h = draw_word_focus(
             d, words_ar, word_windows, progress, f["ar"],
-            cx=W//2, y_start=ar_top, alpha=a
+            cx=W//2, y_start=ar_top, alpha=a,
+            is_ayah_end=is_ayah_end, ayah_num=verse["ayah"], num_font=f["ayah_num"]
         )
     else:
         ar_h = draw_arabic_text(
             d, verse["ar"], f["ar"],
             cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=20,
-            progress=progress, word_windows=word_windows
+            progress=progress, word_windows=word_windows,
+            is_ayah_end=is_ayah_end, ayah_num=verse["ayah"], num_font=f["ayah_num"]
         )
 
     # ── 5. Séparateur — ligne dorée ornementale avec fleurs ──────────────────
@@ -2569,39 +2680,17 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
                 fill=(*ACCENT, int(a * 0.7))
             )
 
-    # ── 6. Référence verset + signe de fin de verset (façon Coran) ───────────
-    ref_y     = sep_y + 18
+    # ── 6. Référence verset (numéro latin, pour qui ne lit pas l'arabe) ──────
+    # 🔧 Le symbole de fin de verset (۝ + numéro arabo-indien) vit désormais
+    # DANS le bloc arabe, juste après le dernier mot (voir section 4 /
+    # _draw_ayah_medallion) — fidèle à un vrai Mushaf. On garde ici uniquement
+    # la référence latine simple, sans doublon du médaillon.
+    ref_y      = sep_y + 18
     _clean_ref = _re.sub(r'[a-z]$', '', verse["ref"])
     rw         = f["ref"].getbbox(_clean_ref)[2] - f["ref"].getbbox(_clean_ref)[0]
-    # 🕌 Médaillon ornemental façon "fin de verset" du Coran (۝) avec le numéro
-    # de l'ayah en chiffres arabo-indiens à l'intérieur — placé juste à côté de
-    # la référence latine (qu'on garde pour la lisibilité de ceux qui ne
-    # lisent pas l'arabe).
-    _AR_DIGITS = "٠١٢٣٤٥٦٧٨٩"
-    ayah_ar = "".join(_AR_DIGITS[int(c)] for c in str(verse["ayah"]) if c.isdigit())
-    medallion_r = 20
-    gap = 14
-    total_w = rw + gap + medallion_r * 2
-    rx = W//2 - total_w//2
-    med_cx = rx + rw + gap + medallion_r
-    med_cy = ref_y + (f["ref"].getbbox(_clean_ref)[3] - f["ref"].getbbox(_clean_ref)[1]) // 2
-    # Halo doré (référence)
+    rx         = W//2 - rw//2
     d.text((rx+2, ref_y+3), _clean_ref, font=f["ref"], fill=(0, 0, 0, int(a*0.55)))
     d.text((rx, ref_y), _clean_ref, font=f["ref"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
-    # Médaillon : cercle + petites pointes tout autour (façon rosette), chiffre au centre
-    for i in range(12):
-        angle = _math.pi * i / 6
-        tip_r = medallion_r + 5
-        tx1 = med_cx + medallion_r * _math.cos(angle)
-        ty1 = med_cy + medallion_r * _math.sin(angle)
-        tx2 = med_cx + tip_r * _math.cos(angle)
-        ty2 = med_cy + tip_r * _math.sin(angle)
-        d.line([(tx1, ty1), (tx2, ty2)], fill=(*ACCENT, int(a*0.75)), width=2)
-    d.ellipse([med_cx-medallion_r, med_cy-medallion_r, med_cx+medallion_r, med_cy+medallion_r],
-              outline=(*ACCENT_BRIGHT, int(a*0.9)), width=2)
-    dw = f["small"].getbbox(ayah_ar)[2] - f["small"].getbbox(ayah_ar)[0]
-    dh = f["small"].getbbox(ayah_ar)[3] - f["small"].getbbox(ayah_ar)[1]
-    d.text((med_cx - dw//2, med_cy - dh//2 - dh//4), ayah_ar, font=f["small"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
 
     # ── 7. Traduction anglaise ────────────────────────────────────────────────
     a_en  = a
@@ -2653,14 +2742,37 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
             # À venir : discrets
             d.ellipse([xd-3, dot_y-3, xd+3, dot_y+3], fill=(120, 120, 140, int(a*0.35)))
 
+    # ── 9b. Nom de la sourate ─────────────────────────────────────────────────
+    # 🕌 Repère familier pour quiconque lit le Coran : le numéro de sourate
+    # seul ne dit rien à personne, le nom si. Arabe (police coranique) au-
+    # dessus, translittération (police "title", même famille élégante que
+    # l'accroche en haut, pour une cohérence visuelle de bout en bout) en
+    # dessous. Se met à jour verset par verset si le passage change de sourate.
+    translit, ar_name = SURAH_NAMES.get(verse["surah"], (f"Surah {verse['surah']}", ""))
+    surah_ar_txt = f"سورة {ar_name}" if ar_name else ""
+    surah_en_txt = translit
+
+    surah_ar_y = int(H * 0.894)
+    if surah_ar_txt:
+        saw = f["surah_ar"].getbbox(surah_ar_txt)[2] - f["surah_ar"].getbbox(surah_ar_txt)[0]
+        sax = W//2 - saw//2
+        d.text((sax+2, surah_ar_y+2), surah_ar_txt, font=f["surah_ar"], fill=(0, 0, 0, int(a*0.5)))
+        d.text((sax, surah_ar_y), surah_ar_txt, font=f["surah_ar"], fill=(*ACCENT_TITLE, int(a*0.92)))
+
+    surah_en_y = surah_ar_y + 40
+    sew = f["surah_en"].getbbox(surah_en_txt)[2] - f["surah_en"].getbbox(surah_en_txt)[0]
+    sex = W//2 - sew//2
+    d.text((sex+1, surah_en_y+2), surah_en_txt, font=f["surah_en"], fill=(0, 0, 0, int(a*0.45)))
+    d.text((sex, surah_en_y), surah_en_txt, font=f["surah_en"], fill=(*ACCENT_BRIGHT, int(a*0.85)))
+
     # ── 10. Récitateur + compte ───────────────────────────────────────────────
     rec  = reciter["flag"] + "  " + reciter["name"]
     rw2  = f["small"].getbbox(rec)[2] - f["small"].getbbox(rec)[0]
-    ry2  = int(H * 0.915)
+    ry2  = surah_en_y + 36
     d.text((W//2 - rw2//2 + 1, ry2 + 2), rec, font=f["small"], fill=(0, 0, 0, int(a*0.5)))
     d.text((W//2 - rw2//2, ry2), rec, font=f["small"], fill=(*ACCENT, int(a*0.88)))
     hw   = f["small"].getbbox(ACCOUNT)[2] - f["small"].getbbox(ACCOUNT)[0]
-    hay  = int(H * 0.950)
+    hay  = ry2 + 34
     d.text((W//2 - hw//2 + 1, hay + 2), ACCOUNT, font=f["small"], fill=(0, 0, 0, int(a*0.45)))
     d.text((W//2 - hw//2, hay), ACCOUNT, font=f["small"], fill=(255, 255, 255, int(a*0.78)))
 
@@ -2994,6 +3106,14 @@ def select_verses(passage, reciter):
             cum_after = max(cum_after, cum_before + 1)
         n_audio_frames = max(1, cum_after - cum_before)
         ayah_frames_emitted[key] = cum_after
+
+        # 🕌 Marque si cette sous-partie est la DERNIÈRE de l'ayah réelle — c'est
+        # UNIQUEMENT à ce moment-là que le symbole de fin de verset (۝ + numéro)
+        # doit apparaître, comme dans un vrai Mushaf (jamais au milieu d'une
+        # ayah découpée en plusieurs écrans). Copie du dict pour ne jamais
+        # muter l'entrée partagée de PASSAGES (réutilisée à chaque run).
+        verse = dict(verse)
+        verse["_is_ayah_end"] = is_last_subpart
 
         sel.append(verse)
         audios.append(audio)
