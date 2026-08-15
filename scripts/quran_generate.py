@@ -1934,6 +1934,16 @@ VIDEOS = [
     ("https://assets.mixkit.co/videos/9805/9805-360.mp4", "mosquee_ambiance_montagne"),
     ("https://assets.mixkit.co/videos/35350/35350-360.mp4", "mosquee_ville_aerien"),
     ("https://assets.mixkit.co/videos/9760/9760-360.mp4", "mosquee_village_rural"),
+    ("https://assets.mixkit.co/videos/51502/51502-360.mp4", "cote_rocheuse_vagues"),
+    ("https://assets.mixkit.co/videos/51503/51503-360.mp4", "rivage_plage_aerien"),
+    ("https://assets.mixkit.co/videos/51504/51504-360.mp4", "vagues_plage_rochers"),
+    ("https://assets.mixkit.co/videos/51505/51505-360.mp4", "vagues_ecume_plage"),
+    ("https://assets.mixkit.co/active_storage/video_items/100173/1721166845/100173-video-360.mp4", "cascade_collines_vertes"),
+    ("https://assets.mixkit.co/active_storage/video_items/100170/1721166432/100170-video-360.mp4", "cascade_feuillage_vert"),
+    ("https://assets.mixkit.co/active_storage/video_items/100176/1721167150/100176-video-360.mp4", "cascade_verdure_luxuriante"),
+    ("https://assets.mixkit.co/active_storage/video_items/100177/1721167467/100177-video-360.mp4", "oiseaux_falaise_rocheuse"),
+    ("https://assets.mixkit.co/active_storage/video_items/100175/1721167033/100175-video-360.mp4", "arbres_nuages_ciel"),
+    ("https://assets.mixkit.co/videos/101210/101210-360.mp4", "lagon_ponton_mouettes"),
 ]
 
 class _VideoFrames:
@@ -1951,14 +1961,31 @@ class _VideoFrames:
 def dl_video(url, path, timeout=60):
     if path.exists():
         return True
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            path.write_bytes(r.read())
-        return True
-    except Exception as e:
-        print(f"   Vidéo DL: {e}")
-        return False
+    # 🎥 Tentative de meilleure qualité : la plupart des clips Mixkit existent
+    # aussi en 720p/1080p sous la même URL avec juste le suffixe changé — on
+    # essaie les résolutions supérieures d'abord (bien moins flou une fois
+    # agrandi en 1080x1920), et on ne retombe sur l'URL -360 d'origine que si
+    # rien de mieux n'est disponible pour ce clip précis.
+    candidates = [url]
+    if "-360.mp4" in url:
+        candidates = [url.replace("-360.mp4", "-1080.mp4"),
+                      url.replace("-360.mp4", "-720.mp4"),
+                      url]
+    last_err = None
+    for cand_url in candidates:
+        try:
+            req = urllib.request.Request(cand_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+            if len(data) < 20_000:
+                raise ValueError(f"fichier suspect ({len(data)} octets)")
+            path.write_bytes(data)
+            return True
+        except Exception as e:
+            last_err = e
+            continue
+    print(f"   Vidéo DL: {last_err}")
+    return False
 
 def _extract_video_frames(video_path, n_frames, out_dir):
     """Extrait exactement n_frames (au FPS de la vidéo finale), recadrées en
@@ -1973,7 +2000,7 @@ def _extract_video_frames(video_path, n_frames, out_dir):
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in out_dir.glob("*.jpg"):
             f.unlink()
-        SLOWDOWN = 1.8  # 🐢 clip lu à ~55% de sa vitesse d'origine
+        SLOWDOWN = 2.8  # 🐢 vraiment lent — clip lu à ~36% de sa vitesse d'origine
         vf = f"setpts={SLOWDOWN}*PTS,scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
         cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(video_path),
                "-vf", vf, "-frames:v", str(n_frames), "-q:v", "3",
@@ -2082,7 +2109,8 @@ def ken_burns(img, t, zoom_end=1.06, pan_x=0., pan_y=0.):
 _THEME_KEYWORDS = {
     ("hardship","trial","struggle","steadfast","test","difficult"): [
         "storm_clouds","ocean_waves","rocky_coast","canyon_red","canyon_vegetation",
-        "vagues_rocher_aerien","montagne_rocheuse_neige","brume_montagnes_neige"],
+        "vagues_rocher_aerien","montagne_rocheuse_neige","brume_montagnes_neige",
+        "cote_rocheuse_vagues","vagues_plage_rochers","vagues_ecume_plage"],
     ("mercy","hope","forgiveness","comfort","peace","heart","gratitude","reassured"): [
         "sunset_orange","golden_lake","calm_ocean","alpine_meadow","lac_coucher_soleil_aerien",
         "panorama_vert_aerien","soleil_collines","golden_mountain","turquoise_lake"],
@@ -2094,7 +2122,9 @@ _THEME_KEYWORDS = {
         "montagnes_coucher_soleil","mosquee_nuit"],
     ("paradise","garden","reward","river","abundance","fruit"): [
         "clear_river","flowing_river","river_forest","river_valley","turquoise_lake",
-        "cascade_collines","riviere_foret","riviere_aerienne"],
+        "cascade_collines","riviere_foret","riviere_aerienne","cascade_collines_vertes",
+        "cascade_feuillage_vert","cascade_verdure_luxuriante","lagon_ponton_mouettes",
+        "arbres_nuages_ciel"],
     ("prayer","mosque","dhikr","remembrance","worship","friday","night prayer"): [
         "mosquee_salon_elegant","mosquee_lustres_salon","mosquee_tapis_salon",
         "mosquee_ville_survol","mosquee_ville_aerien","mosquee_village_rural"],
@@ -2116,7 +2146,7 @@ def make_params(n, passage=None):
     kb = []
     for _ in range(n):
         dx, dy = RNG.choice(directions)
-        kb.append({"zoom_end": RNG.uniform(1.02, 1.05), "pan_x": dx * RNG.uniform(0.004, 0.011), "pan_y": dy * RNG.uniform(0.004, 0.011)})
+        kb.append({"zoom_end": RNG.uniform(1.015, 1.035), "pan_x": dx * RNG.uniform(0.002, 0.006), "pan_y": dy * RNG.uniform(0.002, 0.006)})
 
     matched = _matched_themes(passage) if passage else set()
     video_pool = [i for i, (_, th) in enumerate(VIDEOS) if th in matched] if VIDEOS else []
