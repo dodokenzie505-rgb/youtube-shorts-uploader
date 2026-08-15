@@ -2969,6 +2969,22 @@ def select_verses(passage, reciter):
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
     cum_recitation_dur  = 0.0  # 🎯 durée cumulée de récitation déjà retenue (hors hook/outro/breath)
 
+    # 🎯 FIX "petites sourates coupées" : le plafond MAX_TOTAL_DUR (25s par
+    # défaut, garde-fou copyright) pouvait interrompre un passage AVANT sa
+    # dernière ayah alors même que ce passage est une petite sourate complète
+    # (Al-Ikhlas, Al-Falaq, An-Nas, Al-Asr...) — la vidéo s'arrêtait alors en
+    # plein milieu de la sourate, ce qui est pire qu'un léger dépassement de
+    # durée. Quand le passage entier compte peu d'ayat, on préfère désormais
+    # TOUJOURS le terminer intégralement plutôt que le tronquer, même si ça
+    # dépasse un peu le plafond habituel. Réglable via SHORT_SURAH_MAX_AYAT
+    # (défaut 10 — les petites sourates de Juz Amma tiennent largement
+    # dedans) ; au-delà, le comportement d'origine (coupe au plafond, jamais
+    # en plein audio) reste inchangé pour ne pas risquer un dépassement
+    # copyright sur des passages plus longs.
+    n_ayat_total_passage = len(ayah_groups)
+    SHORT_SURAH_MAX_AYAT = int(os.getenv("SHORT_SURAH_MAX_AYAT", "10"))
+    always_complete_passage = n_ayat_total_passage <= SHORT_SURAH_MAX_AYAT
+
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         ref = verse.get("ref") or f"{verse['surah']}:{verse['ayah']}"
@@ -2979,7 +2995,10 @@ def select_verses(passage, reciter):
             # pour une ayah de plus (même minimale), on s'arrête ici — toujours à
             # une frontière d'ayah, jamais en coupant un audio en cours. On ne
             # télécharge donc même pas l'audio suivant (inutile).
-            if n_ayat_so_far > 0:
+            # Sauf pour une petite sourate qu'on a décidé de terminer entièrement
+            # (voir always_complete_passage ci-dessus) : dans ce cas on continue
+            # même si le budget standard est dépassé.
+            if n_ayat_so_far > 0 and not always_complete_passage:
                 room_before = (MAX_TOTAL_DUR - HOOK_AUDIO_DUR - OUTRO_AUDIO_DUR
                                - cum_recitation_dur - BREATH_DUR * n_ayat_so_far)
                 if room_before <= 0:
@@ -3007,7 +3026,7 @@ def select_verses(passage, reciter):
             #     ajouter celle-ci — la vidéo reste sous le plafond.
             prospective_total = (HOOK_AUDIO_DUR + OUTRO_AUDIO_DUR + cum_recitation_dur
                                   + ad + BREATH_DUR * n_ayat_so_far)
-            if prospective_total > MAX_TOTAL_DUR:
+            if prospective_total > MAX_TOTAL_DUR and not always_complete_passage:
                 if n_ayat_so_far == 0:
                     raise AudioMissingError(
                         f"Ayah {ref} dure {ad:.1f}s à elle seule et dépasserait déjà "
@@ -3015,6 +3034,12 @@ def select_verses(passage, reciter):
                         f"passage trop long, abandonné pour éviter un dépassement copyright."
                     )
                 break
+            elif prospective_total > MAX_TOTAL_DUR and always_complete_passage:
+                # Petite sourate : on dépasse volontairement le plafond habituel
+                # pour ne jamais la laisser inachevée (voir always_complete_passage).
+                print(f"      ℹ Petite sourate : dépassement du plafond habituel "
+                      f"({prospective_total:.1f}s > {MAX_TOTAL_DUR:.0f}s) pour terminer "
+                      f"la sourate jusqu'à {ref}, plutôt que de la couper.")
             cum_recitation_dur += ad
             weights = _screen_char_weights(ayah_groups[key])
 
@@ -3463,8 +3488,24 @@ def generate(passage_idx=None):
         n_audio_frames = frame_counts[vi]
         ww_v    = word_windows[vi]   # timing réel des mots pour cet écran, ou None (repli heuristique)
         # Frames pendant la récitation (son actif)
-        fade_in  = max(1, int(FPS * 0.75))
-        fade_out = max(1, int(FPS * 0.65))
+        # 🔧 FIX "1 frame du verset précédent" pendant la transition (surtout
+        # visible sur les PETITES sourates, aux ayat très courtes) : fade_in
+        # (0.75s) et fade_out (0.65s) étaient des constantes FIXES, jamais
+        # bornées par n_audio_frames. Sur un écran très court (ex. "قُلْ هُوَ
+        # اللّٰهُ أَحَدٌ", ~1s d'audio ≈ 24 frames), fade_in+fade_out (≈34
+        # frames) dépassait le nombre total de frames de l'écran : le texte
+        # n'atteignait alors jamais alpha=1.0 (toujours en train de monter OU
+        # de redescendre), et surtout l'ancienne formule de fade-out
+        # (ta = (n_audio_frames-fi)/fade_out) ne retombait JAMAIS pile à 0 à
+        # la toute dernière frame — elle laissait un résidu (quelques % 
+        # d'opacité) qui, juxtaposé à la frame BREATH suivante (alpha=0 net),
+        # se percevait comme un micro-sursaut/flash du texte du verset
+        # précédent. On borne maintenant fade_in/fade_out à la moitié de
+        # l'écran disponible (jamais de chevauchement, toujours au moins 1
+        # frame stable à alpha=1.0 quand c'est géométriquement possible).
+        half_screen = max(1, n_audio_frames // 2)
+        fade_in  = max(1, min(int(FPS * 0.75), half_screen))
+        fade_out = max(1, min(int(FPS * 0.65), half_screen))
         next_group = verse_group[vi+1] if vi < n-1 else None
         next_sc  = group_scenes[next_group][0] if next_group is not None else None
         next_kb  = group_kb[next_group]         if next_group is not None else None
@@ -3495,7 +3536,7 @@ def generate(passage_idx=None):
         # fade-out du texte : à la fin de ce fondu, le texte est invisible ET
         # l'image est déjà celle du prochain écran, donc l'écran suivant
         # démarre "propre", sans second fondu à faire.
-        cross_start = n_audio_frames - fade_out
+        cross_start = max(0, n_audio_frames - fade_out)
         for fi in range(n_audio_frames):
             t_seg = fi / max(1, n_audio_frames)          # local — pilote le karaoké mot-à-mot
             t_bg  = (verse_offset[vi] + fi) / grp_total   # global au groupe — pilote le fond
@@ -3506,11 +3547,18 @@ def generate(passage_idx=None):
                 frame = Image.blend(frame_cur, frame_next, cross_t)
             else:
                 frame = ken_burns(sc_img, t_bg, **kb)
-            # Alpha texte : fade-in en début, fade-out en fin
+            # Alpha texte : fade-in en début, fade-out en fin.
+            # 🔧 FIX : la formule de fade-out redescendait vers 0 SANS jamais
+            # l'atteindre pile à la dernière frame (ta = (n_audio_frames-fi)/
+            # fade_out laissait ~1/fade_out d'opacité résiduelle à fi =
+            # n_audio_frames-1). C'est ce résidu, juxtaposé au alpha=0 net de
+            # la frame BREATH suivante, qui donnait l'impression d'un sursaut
+            # du texte précédent à la transition. On soustrait maintenant 1
+            # pour que la toute dernière frame de l'écran soit à alpha=0 EXACT.
             if fi < fade_in:
                 ta = fi / fade_in
             elif fi > n_audio_frames - fade_out:
-                ta = (n_audio_frames - fi) / max(1, fade_out)
+                ta = (n_audio_frames - 1 - fi) / max(1, fade_out)
             else:
                 ta = 1.0
             frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), vi+1, n, progress=t_seg, word_windows=ww_v)
