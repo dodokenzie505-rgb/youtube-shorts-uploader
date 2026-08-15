@@ -1812,6 +1812,54 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
         total_h += fh + line_gap
     return total_h
 
+def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alpha):
+    """
+    Mode "mot par mot" : affiche UNIQUEMENT le mot en cours de récitation,
+    grand et centré — pas le verset entier. Chaque mot apparaît avec un léger
+    "pop" (échelle + fondu) au moment où il commence, pour marquer le rythme
+    de la récitation plutôt que de simplement remplacer le texte d'un coup.
+    `word_windows` : liste de (start_frac, end_frac) locaux à l'écran, un par
+    mot de `words`, dans le même ordre — voir _align_ayah_words(). Suppose
+    que l'appelant a déjà vérifié la cohérence (même longueur que `words`).
+    """
+    p = max(0.0, min(1.0, progress))
+    gi = 0
+    for i, (w_start, w_end) in enumerate(word_windows):
+        if p >= w_end and i < len(word_windows) - 1:
+            gi = i + 1
+            continue
+        gi = i
+        break
+    word = words[gi]
+    w_start, w_end = word_windows[gi]
+    word_dur = max(0.001, w_end - w_start)
+    local_t  = max(0.0, min(1.0, (p - w_start) / word_dur))
+    # Pop d'entrée sur les premières ~18% du temps du mot (scale 0.85→1.0 + fondu)
+    pop = _ease_inout(min(1.0, local_t / 0.18)) if local_t < 0.18 else 1.0
+    word_alpha = int(alpha * (0.55 + 0.45 * pop))
+    scale = 0.88 + 0.12 * pop
+
+    base_size = font.size if hasattr(font, "size") else 80
+    big_size  = int(base_size * 1.35 * scale)
+    try:
+        big_font = font.font_variant(size=max(10, big_size))
+    except Exception:
+        big_font = font
+
+    bb = big_font.getbbox(word)
+    ww = bb[2] - bb[0]
+    fh = bb[3] - bb[1]
+    x  = cx - ww // 2
+    y  = y_start
+
+    glow_a = int(word_alpha * 0.5)
+    for dx, dy in [(-4,0),(4,0),(0,-4),(0,4),(-3,-3),(3,-3),(-3,3),(3,3)]:
+        draw.text((x + dx, y + dy), word, font=big_font, fill=(255, 255, 255, glow_a))
+    for dx, dy in _SHADOW_OFFSETS:
+        draw.text((x + dx, y + dy), word, font=big_font, fill=(0, 0, 0, min(word_alpha, 150)))
+    draw.text((x, y), word, font=big_font, fill=(255, 255, 255, word_alpha))
+    return fh + 30
+
 _PERSON_DETECTORS = {"loaded": False, "face": None, "hog": None}
 
 def _load_person_detectors():
@@ -2363,7 +2411,16 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     words_ar  = verse["ar"].split()
     lines_ar  = _wrap_words(words_ar, f["ar"], 920)
     fh        = _line_h(f["ar"]) + 6
-    ar_est_h  = len(lines_ar) * (fh + 20) + 10   # 🔧 même line_gap que draw_arabic_text (20, était 32)
+    # 🔤 Mode "mot par mot" : seul le mot en cours de récitation est affiché à
+    # l'écran (au lieu du verset entier avec surlignage) — actif quand
+    # l'alignement forcé a réussi pour cette ayah, repli sur l'affichage
+    # complet sinon. N'a besoin que d'UNE ligne de hauteur, jamais du bloc
+    # entier wrappé.
+    use_word_focus = (
+        progress is not None and word_windows is not None
+        and len(word_windows) == len(words_ar)
+    )
+    ar_est_h  = (fh + 20 + 10) if use_word_focus else len(lines_ar) * (fh + 20) + 10   # 🔧 même line_gap que draw_arabic_text (20, était 32)
     en_paragraphs = verse["en"].split("\n")
     en_wrapped    = [_wrap_words(p.split(), f["en"], 940) for p in en_paragraphs]
     en_n_lines    = sum(len(p) for p in en_wrapped) or 1
@@ -2425,12 +2482,19 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     # Texte principal
     d.text((tx, title_y), title, font=f["title"], fill=(*ACCENT_TITLE, int(a*0.95)))
 
-    # ── 4. Verset arabe — surlignage karaoké suivant la récitation ──────────
-    ar_h = draw_arabic_text(
-        d, verse["ar"], f["ar"],
-        cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=20,
-        progress=progress, word_windows=word_windows
-    )
+    # ── 4. Verset arabe — un seul mot affiché à la fois (mode "mot par mot"),
+    # avec repli sur le verset entier si l'alignement n'est pas disponible ──
+    if use_word_focus:
+        ar_h = draw_word_focus(
+            d, words_ar, word_windows, progress, f["ar"],
+            cx=W//2, y_start=ar_top, alpha=a
+        )
+    else:
+        ar_h = draw_arabic_text(
+            d, verse["ar"], f["ar"],
+            cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=20,
+            progress=progress, word_windows=word_windows
+        )
 
     # ── 5. Séparateur — ligne dorée ornementale avec fleurs ──────────────────
     sep_y    = ar_top + ar_h + 22
@@ -2460,14 +2524,39 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
                 fill=(*ACCENT, int(a * 0.7))
             )
 
-    # ── 6. Référence verset ──────────────────────────────────────────────────
+    # ── 6. Référence verset + signe de fin de verset (façon Coran) ───────────
     ref_y     = sep_y + 18
     _clean_ref = _re.sub(r'[a-z]$', '', verse["ref"])
     rw         = f["ref"].getbbox(_clean_ref)[2] - f["ref"].getbbox(_clean_ref)[0]
-    rx         = W//2 - rw//2
-    # Halo doré
+    # 🕌 Médaillon ornemental façon "fin de verset" du Coran (۝) avec le numéro
+    # de l'ayah en chiffres arabo-indiens à l'intérieur — placé juste à côté de
+    # la référence latine (qu'on garde pour la lisibilité de ceux qui ne
+    # lisent pas l'arabe).
+    _AR_DIGITS = "٠١٢٣٤٥٦٧٨٩"
+    ayah_ar = "".join(_AR_DIGITS[int(c)] for c in str(verse["ayah"]) if c.isdigit())
+    medallion_r = 20
+    gap = 14
+    total_w = rw + gap + medallion_r * 2
+    rx = W//2 - total_w//2
+    med_cx = rx + rw + gap + medallion_r
+    med_cy = ref_y + (f["ref"].getbbox(_clean_ref)[3] - f["ref"].getbbox(_clean_ref)[1]) // 2
+    # Halo doré (référence)
     d.text((rx+2, ref_y+3), _clean_ref, font=f["ref"], fill=(0, 0, 0, int(a*0.55)))
     d.text((rx, ref_y), _clean_ref, font=f["ref"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
+    # Médaillon : cercle + petites pointes tout autour (façon rosette), chiffre au centre
+    for i in range(12):
+        angle = _math.pi * i / 6
+        tip_r = medallion_r + 5
+        tx1 = med_cx + medallion_r * _math.cos(angle)
+        ty1 = med_cy + medallion_r * _math.sin(angle)
+        tx2 = med_cx + tip_r * _math.cos(angle)
+        ty2 = med_cy + tip_r * _math.sin(angle)
+        d.line([(tx1, ty1), (tx2, ty2)], fill=(*ACCENT, int(a*0.75)), width=2)
+    d.ellipse([med_cx-medallion_r, med_cy-medallion_r, med_cx+medallion_r, med_cy+medallion_r],
+              outline=(*ACCENT_BRIGHT, int(a*0.9)), width=2)
+    dw = f["small"].getbbox(ayah_ar)[2] - f["small"].getbbox(ayah_ar)[0]
+    dh = f["small"].getbbox(ayah_ar)[3] - f["small"].getbbox(ayah_ar)[1]
+    d.text((med_cx - dw//2, med_cy - dh//2 - dh//4), ayah_ar, font=f["small"], fill=(*ACCENT_BRIGHT, int(a*0.95)))
 
     # ── 7. Traduction anglaise ────────────────────────────────────────────────
     a_en  = a
@@ -3114,7 +3203,51 @@ def generate(passage_idx=None):
         return None
     p      = make_params(n, passage)
     _breath_buf = int(round(BREATH * FPS)) + 20  # marge pour transitions/souffle
-    scenes = [get_scene(i, p, n_frames=frame_counts[i] + _breath_buf) for i in range(n)]
+
+    # 🎬 2-3 scènes PARTAGÉES pour toute la vidéo (au lieu d'une par écran) :
+    # moins de coupures = plus doux, et permet d'investir le "budget qualité"
+    # sur moins de clips. Le mouvement continue en fondu à l'intérieur d'un
+    # même groupe (même clip, on avance juste dans sa timeline) — seul un
+    # changement de GROUPE déclenche un vrai fondu vers un autre clip. Les
+    # coupures de groupe ne tombent jamais en plein milieu d'une ayah
+    # multi-écrans (uniquement aux frontières d'ayah, comme les transitions
+    # "breath" existantes).
+    ayah_boundaries = [i for i in range(n - 1)
+                        if (verses[i+1]["surah"], verses[i+1]["ayah"]) != (verses[i]["surah"], verses[i]["ayah"])]
+    n_groups = min(3 if n >= 5 else (2 if n >= 2 else 1), len(ayah_boundaries) + 1)
+    total_f  = sum(frame_counts) or 1
+    cuts, cum = [], 0
+    for i in range(n - 1):
+        cum += frame_counts[i]
+        if i in ayah_boundaries and len(cuts) < n_groups - 1 and cum >= total_f * (len(cuts) + 1) / n_groups:
+            cuts.append(i + 1)  # le groupe suivant démarre à l'index i+1
+    groups = []
+    start = 0
+    for c in cuts:
+        groups.append(list(range(start, c)))
+        start = c
+    groups.append(list(range(start, n)))
+    n_groups = len(groups)
+
+    verse_group, verse_offset, group_total_frames = {}, {}, []
+    for gidx, g in enumerate(groups):
+        offset = 0
+        for vi_ in g:
+            verse_group[vi_]  = gidx
+            verse_offset[vi_] = offset
+            offset += frame_counts[vi_]
+        group_total_frames.append(max(1, offset))
+
+    _directions = [(+1,0),(-1,0),(0,+1),(0,-1)]
+    group_kb = []
+    for _ in range(n_groups):
+        dxg, dyg = RNG.choice(_directions)
+        group_kb.append({"zoom_end": RNG.uniform(1.015, 1.035),
+                          "pan_x": dxg * RNG.uniform(0.002, 0.006),
+                          "pan_y": dyg * RNG.uniform(0.002, 0.006)})
+    group_scenes = [get_scene(gidx, p, n_frames=group_total_frames[gidx] + _breath_buf) for gidx in range(n_groups)]
+    print(f"   🎬 {n_groups} scène(s) pour toute la vidéo (au lieu de {n} — moins de coupures, plus de douceur)")
+
     fd = OUT_DIR / "frames"
     for f in fd.glob("*.jpg"):
         f.unlink()
@@ -3140,8 +3273,8 @@ def generate(passage_idx=None):
     if HOOK_FRAMES > 0:
         hook_text = _pick_hook()
         hook_fade  = max(1, int(HOOK_FRAMES * 0.28))
-        hook_scene = scenes[0][0]
-        hook_kb    = p["kb"][0]
+        hook_scene = group_scenes[0][0]
+        hook_kb    = group_kb[0]
         for fi in range(HOOK_FRAMES):
             t_h = fi / max(1, HOOK_FRAMES)
             frame = ken_burns(hook_scene, t_h, **hook_kb)
@@ -3159,15 +3292,17 @@ def generate(passage_idx=None):
     for vi in range(n):
         verse   = verses[vi]
         aud_dur_v = aud_durs[vi]
-        sc_img, _ = scenes[vi]
-        kb      = p["kb"][vi]
+        g = verse_group[vi]
+        sc_img  = group_scenes[g][0]
+        kb      = group_kb[g]
         n_audio_frames = frame_counts[vi]
         ww_v    = word_windows[vi]   # timing réel des mots pour cet écran, ou None (repli heuristique)
         # Frames pendant la récitation (son actif)
         fade_in  = max(1, int(FPS * 0.75))
         fade_out = max(1, int(FPS * 0.65))
-        next_sc  = scenes[vi+1][0] if vi < n-1 else None
-        next_kb  = p["kb"][vi+1]   if vi < n-1 else None
+        next_group = verse_group[vi+1] if vi < n-1 else None
+        next_sc  = group_scenes[next_group][0] if next_group is not None else None
+        next_kb  = group_kb[next_group]         if next_group is not None else None
         n_words  = len(verse["ar"].split())
         print("Verset " + str(vi+1) + "/" + str(n) + " — " + verse["ref"] + " — " + str(n_words) + " mots")
         # ── Calculé ICI (avant la boucle) pour piloter à la fois le crossfade
@@ -3175,29 +3310,37 @@ def generate(passage_idx=None):
         next_is_new_ayah = (vi < n - 1 and
             (verses[vi+1]["surah"] != verse["surah"] or
              verses[vi+1]["ayah"]  != verse["ayah"]))
+        # 🎬 Un changement de GROUPE (≠ changement d'ayah) est ce qui déclenche
+        # un vrai fondu vers un AUTRE clip — tant qu'on reste dans le même
+        # groupe, le fond continue simplement d'avancer dans sa propre
+        # timeline (même à travers un changement d'ayah), pour un mouvement
+        # ininterrompu au lieu d'une coupure à chaque verset.
+        next_is_new_group = (next_group is not None and next_group != g)
+        grp_total = max(1, group_total_frames[g])
         # ── Frames audio du verset ──────────────────────────────────────────
         # TRANSITION PROPRE (fix bug glitch) :
         # - Pendant l'audio : image STABLE (ken-burns), texte visible
         # - Fade-out texte sur les dernières fade_out frames (image toujours stable)
         # - Pendant BREATH : image crossfade A→B, texte INVISIBLE (alpha=0)
         # - Au verset suivant : fade-in texte sur les premières fade_in frames
-        # 🎬 Amélioration transitions : quand l'écran suivant fait partie de la
-        # MÊME ayah (simple découpage en plusieurs écrans, sans silence BREATH
-        # prévu), on ne veut plus un cut brutal d'image en plein milieu de la
-        # récitation. On fond doucement vers l'image suivante pendant les
-        # dernières frames de fade-out du texte : à la fin de ce fondu, le
-        # texte est invisible ET l'image est déjà celle du prochain écran, donc
-        # l'écran suivant démarre "propre", sans second fondu à faire.
+        # 🎬 Amélioration transitions : quand l'écran suivant fait partie du
+        # MÊME GROUPE (même clip, ayah identique ou non), on ne veut plus un
+        # cut brutal d'image en plein milieu de la récitation. On fond
+        # doucement vers l'image suivante pendant les dernières frames de
+        # fade-out du texte : à la fin de ce fondu, le texte est invisible ET
+        # l'image est déjà celle du prochain écran, donc l'écran suivant
+        # démarre "propre", sans second fondu à faire.
         cross_start = n_audio_frames - fade_out
         for fi in range(n_audio_frames):
-            t_seg = fi / max(1, n_audio_frames)
-            if (not next_is_new_ayah) and next_sc is not None and fi >= cross_start:
+            t_seg = fi / max(1, n_audio_frames)          # local — pilote le karaoké mot-à-mot
+            t_bg  = (verse_offset[vi] + fi) / grp_total   # global au groupe — pilote le fond
+            if (not next_is_new_group) and next_sc is not None and fi >= cross_start:
                 cross_t = _ease_inout((fi - cross_start) / max(1, fade_out))
-                frame_cur  = ken_burns(sc_img, t_seg, **kb)
-                frame_next = ken_burns(next_sc, 0., **next_kb)
+                frame_cur  = ken_burns(sc_img, t_bg, **kb)
+                frame_next = ken_burns(sc_img, t_bg, **kb)  # même clip, léger lissage
                 frame = Image.blend(frame_cur, frame_next, cross_t)
             else:
-                frame = ken_burns(sc_img, t_seg, **kb)
+                frame = ken_burns(sc_img, t_bg, **kb)
             # Alpha texte : fade-in en début, fade-out en fin
             if fi < fade_in:
                 ta = fi / fade_in
@@ -3210,14 +3353,21 @@ def generate(passage_idx=None):
             gi += 1
         # ── Frames BREATH : crossfade IMAGE seulement, texte invisible ────────
         # Uniquement entre ayat DIFFÉRENTES (pas entre sous-parties du même verset,
-        # déjà lissées ci-dessus par le crossfade de fin de sous-partie)
+        # déjà lissées ci-dessus par le crossfade de fin de sous-partie). Si on
+        # reste dans le même groupe, on continue d'avancer dans le même clip
+        # (pas de retour en arrière à t=0) ; sinon, fondu vers le clip suivant.
         if vi < n - 1 and next_is_new_ayah:
+            t_bg_end = (verse_offset[vi] + n_audio_frames) / grp_total
+            if next_is_new_group:
+                t_bg_start_next, scene_next, kb_next = 0.0, next_sc, next_kb
+            else:
+                t_bg_start_next, scene_next, kb_next = verse_offset[vi+1] / grp_total, sc_img, kb
             for bi in range(breath_frames):
                 t_b = bi / max(1, breath_frames - 1)
                 # Crossfade progressif image A → image B (easing smooth)
                 t_ease = _ease_inout(t_b)
-                frame_a = ken_burns(sc_img, 1.0, **kb)
-                frame_b = ken_burns(next_sc, 0., **next_kb)
+                frame_a = ken_burns(sc_img, t_bg_end, **kb)
+                frame_b = ken_burns(scene_next, t_bg_start_next, **kb_next)
                 frame   = Image.blend(frame_a, frame_b, t_ease)
                 # Texte INVISIBLE pendant le crossfade (alpha=0) → plus de glitch
                 frame = render_frame(frame, verse, reciter, passage["title"], 0.0, vi+1, n)
@@ -3226,8 +3376,8 @@ def generate(passage_idx=None):
         print(f"  Verset {vi+1} OK")
 
     # ── Carte de fermeture (outro CTA) — après le dernier verset ─────────────
-    outro_scene = scenes[0][0]
-    outro_kb    = p["kb"][-1]
+    outro_scene = group_scenes[0][0]
+    outro_kb    = group_kb[0]
     outro_fade  = max(1, int(OUTRO_FRAMES * 0.22))
     for fi in range(OUTRO_FRAMES):
         t_o = fi / max(1, OUTRO_FRAMES)
