@@ -1565,6 +1565,11 @@ PHOTOS = [
     ("https://images.unsplash.com/photo-1503756234508-e32369269ddb?w=1080&h=1920&fit=crop&crop=center", "turquoise_lake"),
 ]
 
+# Poids "engagement" pour les photos de secours — même logique que VIDEO_WEIGHTS
+# (voir _boost_weights juste après VIDEOS). Défini ici car PHOTOS est déclaré
+# avant _boost_weights ci-dessous dans le fichier ; le calcul réel est fait
+# plus bas une fois _boost_weights disponible (voir PHOTO_WEIGHTS).
+
 def _load_font(paths, size, label=""):
     for p in paths:
         try:
@@ -1815,9 +1820,9 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
 def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alpha):
     """
     Mode "mot par mot" : affiche UNIQUEMENT le mot en cours de récitation,
-    grand et centré — pas le verset entier. Chaque mot apparaît avec un léger
-    "pop" (échelle + fondu) au moment où il commence, pour marquer le rythme
-    de la récitation plutôt que de simplement remplacer le texte d'un coup.
+    centré — pas le verset entier. Chaque mot apparaît avec un simple fondu
+    (alpha) au moment où il commence, pour marquer le rythme de la
+    récitation sans bouger ni changer de taille.
     `word_windows` : liste de (start_frac, end_frac) locaux à l'écran, un par
     mot de `words`, dans le même ordre — voir _align_ayah_words(). Suppose
     que l'appelant a déjà vérifié la cohérence (même longueur que `words`).
@@ -1834,19 +1839,16 @@ def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alph
     w_start, w_end = word_windows[gi]
     word_dur = max(0.001, w_end - w_start)
     local_t  = max(0.0, min(1.0, (p - w_start) / word_dur))
-    # Pop d'entrée sur les premières ~18% du temps du mot (scale 0.85→1.0 + fondu)
-    pop = _ease_inout(min(1.0, local_t / 0.18)) if local_t < 0.18 else 1.0
-    word_alpha = int(alpha * (0.55 + 0.45 * pop))
-    scale = 0.88 + 0.12 * pop
+    # 🔧 FIX "mot grossi / mouvement bizarre" : l'ancien effet changeait la
+    # TAILLE de police (×1.35, puis re-scale 0.88→1.0) à chaque mot — visible
+    # comme un "zoom" saccadé plutôt qu'un texte propre. On garde désormais
+    # une taille FIXE (celle de `font`, aucun agrandissement) et seul l'alpha
+    # varie : fondu d'entrée propre sur les premières ~15% du temps du mot,
+    # sans aucun redimensionnement ni déplacement.
+    fade_in    = _ease_inout(min(1.0, local_t / 0.15)) if local_t < 0.15 else 1.0
+    word_alpha = int(alpha * (0.35 + 0.65 * fade_in))
 
-    base_size = font.size if hasattr(font, "size") else 80
-    big_size  = int(base_size * 1.35 * scale)
-    try:
-        big_font = font.font_variant(size=max(10, big_size))
-    except Exception:
-        big_font = font
-
-    bb = big_font.getbbox(word)
+    bb = font.getbbox(word)
     ww = bb[2] - bb[0]
     fh = bb[3] - bb[1]
     x  = cx - ww // 2
@@ -1854,10 +1856,10 @@ def draw_word_focus(draw, words, word_windows, progress, font, cx, y_start, alph
 
     glow_a = int(word_alpha * 0.5)
     for dx, dy in [(-4,0),(4,0),(0,-4),(0,4),(-3,-3),(3,-3),(-3,3),(3,3)]:
-        draw.text((x + dx, y + dy), word, font=big_font, fill=(255, 255, 255, glow_a))
+        draw.text((x + dx, y + dy), word, font=font, fill=(255, 255, 255, glow_a))
     for dx, dy in _SHADOW_OFFSETS:
-        draw.text((x + dx, y + dy), word, font=big_font, fill=(0, 0, 0, min(word_alpha, 150)))
-    draw.text((x, y), word, font=big_font, fill=(255, 255, 255, word_alpha))
+        draw.text((x + dx, y + dy), word, font=font, fill=(0, 0, 0, min(word_alpha, 150)))
+    draw.text((x, y), word, font=font, fill=(255, 255, 255, word_alpha))
     return fh + 30
 
 _PERSON_DETECTORS = {"loaded": False, "face": None, "hog": None}
@@ -1994,6 +1996,34 @@ VIDEOS = [
     ("https://assets.mixkit.co/videos/101210/101210-360.mp4", "lagon_ponton_mouettes"),
 ]
 
+# 🚀 Boost "engagement" : d'après le retour terrain sur ce type de format
+# (Reels/Shorts spirituels), les mosquées vues du ciel, les couchers/levers
+# de soleil, l'océan et les ciels étoilés reconnaissent le contenu comme
+# "islamique/apaisant" en une fraction de seconde et retiennent mieux —
+# contrairement aux forêts/rivières génériques qui se confondent avec du
+# contenu nature quelconque. On ne les élimine pas (toujours de la variété),
+# mais on multiplie fortement leurs chances d'être tirées au sort. Ceci est
+# une heuristique de bon sens, pas une donnée d'audience mesurée sur CE
+# compte — à ajuster si les stats YouTube/TikTok du compte montrent autre
+# chose. Réglable via BOOST_WEIGHT.
+_BOOSTED_KEYWORDS = (
+    "mosquee", "batiment_islamique",                                   # mosquées / architecture islamique
+    "sunset", "coucher_soleil", "sunrise", "golden", "soleil",          # coucher/lever de soleil
+    "ocean", "vagues", "wave", "turquoise", "plage", "beach", "mer",
+    "baie", "lagon", "rivage",                                         # océan / plages
+    "starry", "etoile", "milky_way", "aurora", "nuit",                 # ciel étoilé / nuit
+)
+BOOST_WEIGHT = float(os.getenv("BOOST_WEIGHT", "4.0"))
+
+def _boost_weights(items):
+    """Poids de tirage pour une liste (url, theme) : BOOST_WEIGHT si le thème
+    contient un mot-clé "haute performance", sinon 1.0."""
+    return [BOOST_WEIGHT if any(k in th.lower() for k in _BOOSTED_KEYWORDS) else 1.0
+            for _, th in items]
+
+VIDEO_WEIGHTS = _boost_weights(VIDEOS)
+PHOTO_WEIGHTS = _boost_weights(PHOTOS)
+
 class _VideoFrames:
     """Enveloppe une liste de frames PIL déjà extraites/gradées d'un clip vidéo.
     ken_burns() la reconnaît et indexe dedans au lieu de faire un pan/zoom —
@@ -2048,7 +2078,12 @@ def _extract_video_frames(video_path, n_frames, out_dir):
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in out_dir.glob("*.jpg"):
             f.unlink()
-        SLOWDOWN = 2.8  # 🐢 vraiment lent — clip lu à ~36% de sa vitesse d'origine
+        # 🔧 FIX vitesse artificielle : 2.8 ralentissait le clip à ~36% de sa
+        # vitesse réelle — un survol aérien normal devenait visiblement figé/
+        # au ralenti, ce qui casse l'effet "naturel" recherché. On reste à la
+        # vitesse native (1.0), sans ralenti artificiel. Réglable via
+        # CLIP_SLOWDOWN si besoin (1.0 = vitesse réelle).
+        SLOWDOWN = float(os.getenv("CLIP_SLOWDOWN", "1.0"))
         vf = f"setpts={SLOWDOWN}*PTS,scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
         cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(video_path),
                "-vf", vf, "-frames:v", str(n_frames), "-q:v", "3",
@@ -2200,20 +2235,30 @@ def make_params(n, passage=None):
     video_pool = [i for i, (_, th) in enumerate(VIDEOS) if th in matched] if VIDEOS else []
     photo_pool = [i for i, (_, th) in enumerate(PHOTOS) if th in matched]
 
-    def _themed_indices(pool, full_len, k):
+    def _themed_indices(pool, full_len, k, weights):
         # 75% des scènes tirées du pool thématique (si non vide), 25% au hasard
         # dans tout le catalogue — garde un lien avec le verset sans rendre
-        # chaque vidéo du même thème visuellement identique.
-        if not pool or full_len == 0:
-            return [RNG.randrange(full_len) for _ in range(k)] if full_len else []
+        # chaque vidéo du même thème visuellement identique. Les tirages
+        # "au hasard" (fallback complet ET les 25%) sont pondérés par
+        # `weights` (voir BOOST_WEIGHT) pour favoriser mosquées / couchers de
+        # soleil / océan / ciel étoilé plutôt qu'un vrai tirage uniforme.
+        if full_len == 0:
+            return []
+        if not pool:
+            return RNG.choices(range(full_len), weights=weights, k=k)
+        pool_weights = [weights[i] for i in pool]
         out = []
         for _ in range(k):
-            out.append(RNG.choice(pool) if RNG.random() < 0.75 else RNG.randrange(full_len))
+            if RNG.random() < 0.75:
+                out.append(RNG.choices(pool, weights=pool_weights, k=1)[0])
+            else:
+                out.append(RNG.choices(range(full_len), weights=weights, k=1)[0])
         return out
 
     return {
-        "photo_indices": _themed_indices(photo_pool, len(PHOTOS), n) if photo_pool else RNG.sample(range(len(PHOTOS)), k=min(n, len(PHOTOS))),
-        "video_indices": _themed_indices(video_pool, len(VIDEOS), n) if VIDEOS else [],
+        "photo_indices": _themed_indices(photo_pool, len(PHOTOS), n, PHOTO_WEIGHTS) if photo_pool
+                          else RNG.choices(range(len(PHOTOS)), weights=PHOTO_WEIGHTS, k=min(n, len(PHOTOS))),
+        "video_indices": _themed_indices(video_pool, len(VIDEOS), n, VIDEO_WEIGHTS) if VIDEOS else [],
         "contrast":      RNG.uniform(1.08, 1.18),   # Contraste modéré pour ne pas assombrir
         "color_sat":     RNG.uniform(1.15, 1.35),   # Couleurs bien saturées
         "brightness":    RNG.uniform(0.95, 1.10),   # Toujours lumineux
