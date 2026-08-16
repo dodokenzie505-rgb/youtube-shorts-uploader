@@ -3394,17 +3394,34 @@ def generate(passage_idx=None):
     p      = make_params(n, passage)
     _breath_buf = int(round(BREATH * FPS)) + 20  # marge pour transitions/souffle
 
-    # 🎬 2-3 scènes PARTAGÉES pour toute la vidéo (au lieu d'une par écran) :
-    # moins de coupures = plus doux, et permet d'investir le "budget qualité"
-    # sur moins de clips. Le mouvement continue en fondu à l'intérieur d'un
-    # même groupe (même clip, on avance juste dans sa timeline) — seul un
-    # changement de GROUPE déclenche un vrai fondu vers un autre clip. Les
-    # coupures de groupe ne tombent jamais en plein milieu d'une ayah
-    # multi-écrans (uniquement aux frontières d'ayah, comme les transitions
-    # "breath" existantes).
+    # 🎬 Plusieurs scènes PARTAGÉES pour toute la vidéo (au lieu d'une par
+    # écran) : moins de coupures = plus doux, et permet d'investir le "budget
+    # qualité" sur moins de clips. Le mouvement continue en fondu à
+    # l'intérieur d'un même groupe (même clip, on avance juste dans sa
+    # timeline) — seul un changement de GROUPE déclenche un vrai fondu vers
+    # un autre clip. Les coupures de groupe ne tombent jamais en plein
+    # milieu d'une ayah multi-écrans (uniquement aux frontières d'ayah,
+    # comme les transitions "breath" existantes).
+    # 🔧 Nombre de paysages : jusqu'ici plafonné à 3 quelle que soit la
+    # longueur ; on l'étend maintenant à 4 pour les passages plus longs
+    # (échelle sur le nombre d'ayat DISTINCTES, pas le nombre d'écrans, qui
+    # peut être gonflé par des sous-parties de la même ayah comme Ayat
+    # Al-Kursi). Le dernier paysage utilisé (juste avant l'outro) reprend
+    # volontairement le TOUT PREMIER — effet "boucle" (voir plus bas, section
+    # outro) — donc plus la vidéo est longue, plus on voit de paysages
+    # différents entre l'ouverture et sa reprise finale.
     ayah_boundaries = [i for i in range(n - 1)
                         if (verses[i+1]["surah"], verses[i+1]["ayah"]) != (verses[i]["surah"], verses[i]["ayah"])]
-    n_groups = min(3 if n >= 5 else (2 if n >= 2 else 1), len(ayah_boundaries) + 1)
+    distinct_ayat = len(ayah_boundaries) + 1
+    if distinct_ayat >= 8:
+        n_groups_target = 4
+    elif distinct_ayat >= 5:
+        n_groups_target = 3
+    elif distinct_ayat >= 3:
+        n_groups_target = 2
+    else:
+        n_groups_target = 1
+    n_groups = min(n_groups_target, distinct_ayat)
     total_f  = sum(frame_counts) or 1
     cuts, cum = [], 0
     for i in range(n - 1):
@@ -3437,6 +3454,8 @@ def generate(passage_idx=None):
                           "pan_y": dyg * RNG.uniform(0.002, 0.006)})
     group_scenes = [get_scene(gidx, p, n_frames=group_total_frames[gidx] + _breath_buf) for gidx in range(n_groups)]
     print(f"   🎬 {n_groups} scène(s) pour toute la vidéo (au lieu de {n} — moins de coupures, plus de douceur)")
+
+
 
     fd = OUT_DIR / "frames"
     for f in fd.glob("*.jpg"):
@@ -3589,21 +3608,64 @@ def generate(passage_idx=None):
         print(f"  Verset {vi+1} OK")
 
     # ── Carte de fermeture (outro CTA) — après le dernier verset ─────────────
+    # 🔧 FIX transition sale entrée-outro (le vrai "flash" perçu) : jusqu'ici
+    # le fond de l'outro redémarrait BRUTALEMENT à t=0 du premier paysage de
+    # la vidéo, sans le moindre fondu — contrairement aux transitions entre
+    # ayat (breath), qui elles étaient déjà en fondu. C'est ce cut sec, pile
+    # au moment où le dernier verset s'efface, qui donnait l'impression d'un
+    # "sursaut" à la transition. On applique maintenant EXACTEMENT la même
+    # technique de fondu image que les transitions breath entre versets :
+    # départ pile où le dernier verset s'est arrêté (aucun saut), arrivée en
+    # douceur sur le paysage d'ouverture repris ici à dessein — l'effet
+    # "boucle" demandé (le tout premier paysage revient à la toute fin).
     outro_scene = group_scenes[0][0]
     outro_kb    = group_kb[0]
     outro_fade  = max(1, int(OUTRO_FRAMES * 0.22))
-    for fi in range(OUTRO_FRAMES):
-        t_o = fi / max(1, OUTRO_FRAMES)
-        frame = ken_burns(outro_scene, t_o, **outro_kb)
-        if fi < outro_fade:
-            oa = fi / outro_fade
-        elif fi > OUTRO_FRAMES - outro_fade:
-            oa = (OUTRO_FRAMES - fi) / outro_fade
-        else:
-            oa = 1.0
-        frame = render_outro_card(frame, reciter, max(0., oa))
-        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
-        gi += 1
+    last_group     = verse_group[n - 1]
+    last_scene     = group_scenes[last_group][0]
+    last_kb        = group_kb[last_group]
+    last_grp_total = max(1, group_total_frames[last_group])
+    t_bg_last_end  = (verse_offset[n - 1] + frame_counts[n - 1]) / last_grp_total
+    # 🎯 Cas particulier : une seule scène pour toute la vidéo (petite sourate,
+    # 1 seul groupe) → l'outro utilise déjà EXACTEMENT le même clip que le
+    # dernier verset. Plutôt que de "sauter" à t=0 pour ensuite fonduer (ce
+    # qui, sur un même clip, ferait un aller-retour visible dans la même
+    # vidéo source), on continue simplement d'avancer sur sa timeline —
+    # continuité totale, zéro fondu nécessaire, zéro saut.
+    if outro_scene is last_scene:
+        span = max(0.0, 1.0 - t_bg_last_end)
+        for fi in range(OUTRO_FRAMES):
+            t_o = min(1.0, t_bg_last_end + (fi / max(1, OUTRO_FRAMES - 1)) * span)
+            frame = ken_burns(outro_scene, t_o, **outro_kb)
+            if fi < outro_fade:
+                oa = fi / outro_fade
+            elif fi > OUTRO_FRAMES - outro_fade:
+                oa = (OUTRO_FRAMES - fi) / outro_fade
+            else:
+                oa = 1.0
+            frame = render_outro_card(frame, reciter, max(0., oa))
+            frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+            gi += 1
+    else:
+        outro_xfade = min(OUTRO_FRAMES - 1, max(breath_frames, int(FPS * 0.5)))
+        for fi in range(OUTRO_FRAMES):
+            t_o = fi / max(1, OUTRO_FRAMES)
+            if fi < outro_xfade:
+                cross_t   = _ease_inout(fi / max(1, outro_xfade - 1))
+                frame_old = ken_burns(last_scene, min(1.0, t_bg_last_end), **last_kb)
+                frame_new = ken_burns(outro_scene, t_o, **outro_kb)
+                frame     = Image.blend(frame_old, frame_new, cross_t)
+            else:
+                frame = ken_burns(outro_scene, t_o, **outro_kb)
+            if fi < outro_fade:
+                oa = fi / outro_fade
+            elif fi > OUTRO_FRAMES - outro_fade:
+                oa = (OUTRO_FRAMES - fi) / outro_fade
+            else:
+                oa = 1.0
+            frame = render_outro_card(frame, reciter, max(0., oa))
+            frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+            gi += 1
     print(f"  Outro CTA OK")
 
     print(f"{gi} frames rendues")
@@ -3645,7 +3707,20 @@ def generate(passage_idx=None):
         # Commentaire à épingler : une question engageante fait pause le
         # défilement automatique et augmente le temps de visionnage total —
         # signal positif pour l'algo, constaté sur les comptes performants.
-        suggested_pinned_comment = "Which part of this verse spoke to you today? 🤍"
+        # 🔔 Ajout d'un appel à s'abonner : le commentaire épinglé est
+        # l'endroit le plus vu après la vidéo elle-même (toujours en haut des
+        # commentaires), donc l'endroit idéal pour convertir un spectateur
+        # engagé en abonné. Plusieurs variantes (question + CTA abonnement)
+        # tirées au sort pour ne pas répéter mot pour mot à chaque vidéo —
+        # ce serait suspect/spammy si identique sur tout le compte.
+        _PINNED_COMMENT_POOL = [
+            "Which part of this verse spoke to you today? Follow for a daily reminder 🤍",
+            "Save this for when you need it most 🤍 Follow along for daily verses.",
+            "Which line hit you the hardest? Follow for more daily reminders 🤍",
+            "Tag someone who needs to hear this today 🤍 Follow for daily Quran reminders.",
+            "What does this verse mean to you? Follow for a new reminder every day 🤍",
+        ]
+        suggested_pinned_comment = RNG.choice(_PINNED_COMMENT_POOL)
         meta = {
             "title": passage["title"],            # ex: "Patience and Hope"
             "suggested_title": suggested_title,
