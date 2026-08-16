@@ -48,6 +48,44 @@ def generer_video():
     return videos[0], meta
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 💬 Commentaire épinglé — appel à s'abonner
+# ═══════════════════════════════════════════════════════════════════════════
+# ⚠️ LIMITE CONNUE DE L'API : YouTube Data API v3 n'expose AUCUN endpoint pour
+# épingler un commentaire (ni "pinComment", ni un flag sur commentThreads.
+# insert/comments.update). C'est une action réservée à l'interface YouTube
+# Studio, jamais rendue publique côté API — ce n'est pas une lacune de ce
+# script, juste une limite de Google. On ne peut donc PAS automatiser
+# l'épinglage lui-même. Par contre, on PEUT poster automatiquement le
+# commentaire (via commentThreads.insert) pour qu'il ne reste plus qu'à
+# l'épingler d'un tap dans l'app YouTube (30 secondes/jour), au lieu de devoir
+# aussi le rédiger et le copier-coller à la main.
+def post_comment(youtube, video_id, text):
+    """
+    Poste `text` en commentaire de haut niveau sur la vidéo `video_id`.
+    Ne bloque jamais l'upload en cas d'échec (commentaires désactivés sur la
+    chaîne/vidéo, quota API épuisé, etc.) — best-effort, comme le reste du
+    pipeline.
+    """
+    try:
+        youtube.commentThreads().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "videoId": video_id,
+                    "topLevelComment": {
+                        "snippet": {"textOriginal": text}
+                    }
+                }
+            }
+        ).execute()
+        print(f"   💬 Commentaire posté (à épingler manuellement dans YouTube Studio/app — l'API ne permet pas l'épinglage) : {text}")
+        return True
+    except Exception as e:
+        print(f"   ⚠ Échec du post du commentaire (non bloquant) : {e}")
+        return False
+
+
 def main():
     today = datetime.date.today().strftime("%d/%m/%Y")
     print(f"🗓️  Lancement de l'upload du {today} à 18h Paris...")
@@ -90,6 +128,20 @@ def main():
     )
 
     print(f"\n🎉 Vidéo en ligne : {result['url']}")
+
+    # 💬 Poste le commentaire suggéré par quran_generate.py (question +
+    # appel à s'abonner, en anglais — voir suggested_pinned_comment dans
+    # last_meta.json). Best-effort : ne fait jamais échouer le run si ça
+    # rate, la vidéo est déjà en ligne à ce stade.
+    pinned_text = meta.get("suggested_pinned_comment")
+    video_id = result.get("id")
+    if not video_id and result.get("url"):
+        # repli si upload_short ne renvoie pas 'id' directement
+        video_id = result["url"].rstrip("/").split("/")[-1]
+    if pinned_text and video_id:
+        post_comment(youtube, video_id, pinned_text)
+    elif pinned_text and not video_id:
+        print("   ⚠ Impossible de déterminer l'ID vidéo — commentaire non posté (à faire manuellement).")
 
 
 if __name__ == "__main__":
