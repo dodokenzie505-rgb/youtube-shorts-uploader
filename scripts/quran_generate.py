@@ -2491,7 +2491,15 @@ def render_hook_card(base_img, hook_text, alpha_frac):
     panel_h      = panel_bottom - panel_top
     for yi in range(panel_top, panel_bottom):
         dist = abs(yi - mid) / (panel_h / 2 + 1)
-        sa = int(200 * max(0., 1 - dist ** 1.6))
+        # 🔧 FIX CRITIQUE : ce panneau sombre (fond du bloc de texte) n'était
+        # JAMAIS multiplié par af (alpha_frac) — il restait dessiné à pleine
+        # opacité (jusqu'à 200/255) MÊME quand alpha_frac=0.0 (texte censé
+        # être invisible, ex. pendant les transitions breath). Résultat :
+        # pendant chaque transition, ce panneau — dimensionné sur le verset
+        # EN COURS — restait visible en fond, puis changeait brutalement de
+        # taille au verset suivant. C'était CE résidu, pas le texte lui-même,
+        # qui donnait l'impression de "voir l'ancien verset" à la transition.
+        sa = int(200 * af * max(0., 1 - dist ** 1.6))
         d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
     _decorative_band(d, panel_top + 26, a, half_w=int(W * 0.3))
 
@@ -2523,7 +2531,8 @@ def render_outro_card(base_img, reciter, alpha_frac):
     panel_top, panel_bottom = mid - 260, mid + 260
     for yi in range(panel_top, panel_bottom):
         dist = abs(yi - mid) / ((panel_bottom - panel_top) / 2 + 1)
-        sa = int(205 * max(0., 1 - dist ** 1.6))
+        # 🔧 Même FIX que render_hook_card / render_frame : panneau lié à af.
+        sa = int(205 * af * max(0., 1 - dist ** 1.6))
         d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
     _decorative_band(d, panel_top + 26, a, half_w=int(W * 0.28))
 
@@ -2592,7 +2601,16 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     for yi in range(panel_top, panel_bottom):
         dist = abs(yi - mid) / (panel_h / 2 + 1)
         # Dégradé quadratique : très opaque au centre, transparent aux bords
-        sa = int(210 * max(0., 1 - dist ** 1.6))
+        # 🔧 FIX CRITIQUE (le vrai bug de transition) : ce panneau n'était PAS
+        # multiplié par af (alpha_frac) — il restait dessiné à pleine
+        # opacité même quand render_frame était appelé avec alpha=0.0
+        # (pendant le breath, censé être 100% invisible). Puisque ce panneau
+        # est dimensionné sur le verset EN COURS (block_h dépend du texte de
+        # `verse`), il restait visible en fond pendant le crossfade, puis
+        # changeait de taille/position d'un coup au verset suivant — c'est CE
+        # résidu, pas le texte, qui donnait l'impression de "voir l'ancien
+        # verset" à chaque transition.
+        sa = int(210 * af * max(0., 1 - dist ** 1.6))
         # Légère teinte bleu nuit au fond (0, 0, 15)
         d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
 
