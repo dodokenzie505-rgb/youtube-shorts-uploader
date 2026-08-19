@@ -97,7 +97,7 @@ _ensure_installed()
 
 print("\n🚀 Démarrage de la génération...\n")
 
-import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil
+import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil, signal
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 import urllib.request
@@ -2867,6 +2867,44 @@ def get_audio_dur(path):
 # (Whisper). pip install fait une seule fois par run (best-effort).
 _ALIGNER = {"tried": False, "model": None, "tokenizer": None, "device": None, "mod": None}
 
+class _AlignTimeout(Exception):
+    pass
+
+class _alarm_timeout:
+    """
+    Context manager imposant une VRAIE limite de temps (SIGALRM, Unix/Linux
+    uniquement — OK sur les runners GitHub Actions) sur un bloc de code.
+    Contrairement à un paramètre timeout_s non utilisé, ceci interrompt
+    réellement un appel bloqué (ex. inference CPU qui traîne) en levant
+    _AlignTimeout, plutôt que de laisser le run entier se faire tuer par le
+    timeout du job GitHub Actions au bout de 30+ min.
+    Ne fait rien (no-op) si SIGALRM n'est pas disponible (ex. Windows) ou si
+    on n'est pas dans le thread principal — dans ce cas on perd juste la
+    protection, sans jamais planter le script.
+    """
+    def __init__(self, seconds):
+        self.seconds = max(1, int(seconds))
+        self._armed = False
+
+    def _on_alarm(self, signum, frame):
+        raise _AlignTimeout(f"dépassement du délai de {self.seconds}s")
+
+    def __enter__(self):
+        try:
+            self._prev = signal.signal(signal.SIGALRM, self._on_alarm)
+            signal.alarm(self.seconds)
+            self._armed = True
+        except (ValueError, AttributeError, OSError):
+            # Pas dans le thread principal, ou plateforme sans SIGALRM.
+            self._armed = False
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._armed:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, self._prev)
+        return False
+
 def _get_aligner():
     """
     Charge (une seule fois par run) le modèle d'alignement forcé. Retourne
@@ -2876,6 +2914,7 @@ def _get_aligner():
     if _ALIGNER["tried"]:
         return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
     _ALIGNER["tried"] = True
+    _t0 = time.time()
     try:
         # 🔧 FIX CRITIQUE : le package PyPI nommé "ctc-forced-aligner" n'est PAS
         # le bon — c'est un fork tiers (Deskpai) avec une API complètement
@@ -2911,9 +2950,9 @@ def _get_aligner():
         dtype  = torch.float16 if device == "cuda" else torch.float32
         model, tokenizer = _cfa.load_alignment_model(device, dtype=dtype)
         _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"] = model, tokenizer, device, _cfa
-        print(f"   ✅ Modèle d'alignement chargé ({device}) — karaoké mot-à-mot actif.")
+        print(f"   ✅ Modèle d'alignement chargé ({device}) en {time.time()-_t0:.1f}s — karaoké mot-à-mot actif.")
     except Exception as e:
-        print(f"   ⚠ Alignement forcé indisponible ({e}) — repli sur l'heuristique de longueur de mot, sans karaoké sur cette ayah.")
+        print(f"   ⚠ Alignement forcé indisponible ({e}) après {time.time()-_t0:.1f}s — repli sur l'heuristique de longueur de mot, sans karaoké sur cette ayah.")
         _ALIGNER["model"] = None
     return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
 
@@ -2930,20 +2969,26 @@ def _align_ayah_words(audio_path, ar_text, timeout_s=60):
     words_expected = ar_text.split()
     if not words_expected:
         return None
+    t0 = time.time()
     try:
-        waveform = cfa.load_audio(str(audio_path), model.dtype, model.device)
-        emissions, stride = cfa.generate_emissions(model, waveform, batch_size=1)
-        tokens_starred, text_starred = cfa.preprocess_text(ar_text, romanize=True, language="ara")
-        segments, scores, blank_id = cfa.get_alignments(emissions, tokens_starred, tokenizer)
-        spans = cfa.get_spans(tokens_starred, segments, blank_id)
-        results = cfa.postprocess_results(text_starred, spans, stride, scores)
+        with _alarm_timeout(timeout_s):
+            waveform = cfa.load_audio(str(audio_path), model.dtype, model.device)
+            emissions, stride = cfa.generate_emissions(model, waveform, batch_size=1)
+            tokens_starred, text_starred = cfa.preprocess_text(ar_text, romanize=True, language="ara")
+            segments, scores, blank_id = cfa.get_alignments(emissions, tokens_starred, tokenizer)
+            spans = cfa.get_spans(tokens_starred, segments, blank_id)
+            results = cfa.postprocess_results(text_starred, spans, stride, scores)
         if len(results) != len(words_expected):
             print(f"   ⚠ Alignement : {len(results)} mots retournés vs {len(words_expected)} attendus — ignoré (pas de karaoké sur cette ayah).")
             return None
         out = []
         for w_expected, r in zip(words_expected, results):
             out.append((w_expected, float(r["start"]), float(r["end"])))
+        print(f"   ✅ Alignement OK en {time.time()-t0:.1f}s ({len(words_expected)} mots).")
         return out
+    except _AlignTimeout:
+        print(f"   ⚠ Alignement interrompu après {timeout_s}s (trop lent sur cette ayah) — repli sur l'heuristique, sans karaoké ici.")
+        return None
     except Exception as e:
         print(f"   ⚠ Échec alignement sur cette ayah ({e}) — repli sur l'heuristique, sans karaoké ici.")
         return None
