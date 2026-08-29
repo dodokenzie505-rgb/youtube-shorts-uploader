@@ -97,7 +97,7 @@ _ensure_installed()
 
 print("\n🚀 Démarrage de la génération...\n")
 
-import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil, signal
+import os, sys, math, subprocess, datetime, json, random, time, hashlib, unicodedata, shutil
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 import urllib.request
@@ -169,59 +169,59 @@ class AudioMissingError(Exception):
 # ═══════════════════════════════════════════════════════════════════════════
 PASSAGES = [
     # 0 ─ Al-Fatiha complète
-    {"title": "Al-Fatiha — The Opening", "verses": [
-        {"ar": "بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيمِ",   "en": "In the name of Allah, the Most Gracious, the Most Merciful.",  "ref": "1:1",  "surah": 1,  "ayah": 1},
-        {"ar": "الْحَمْدُ لِلّٰهِ رَبِّ الْعَالَمِينَ",    "en": "All praise is due to Allah, Lord of all the worlds.",            "ref": "1:2",  "surah": 1,  "ayah": 2},
-        {"ar": "الرَّحْمٰنِ الرَّحِيمِ",                   "en": "The Most Gracious, the Most Merciful.",                         "ref": "1:3",  "surah": 1,  "ayah": 3},
+    {"title": "Al-Fatiha", "verses": [
+        {"ar": "بِسْمِ اللّٰهِ الرَّحْمٰنِ الرَّحِيمِ",   "en": "In the name of Allah,\nthe Most Gracious, the Most Merciful.", "ref": "1:1",  "surah": 1,  "ayah": 1},
+        {"ar": "الْحَمْدُ لِلّٰهِ رَبِّ الْعَالَمِينَ",    "en": "All praise is due to Allah,\nLord of all the worlds.", "ref": "1:2",  "surah": 1,  "ayah": 2},
+        {"ar": "الرَّحْمٰنِ الرَّحِيمِ",                   "en": "The Most Gracious,\nthe Most Merciful.", "ref": "1:3",  "surah": 1,  "ayah": 3},
         {"ar": "مَالِكِ يَوْمِ الدِّينِ",                  "en": "Master of the Day of Judgment.",                                 "ref": "1:4",  "surah": 1,  "ayah": 4},
-        {"ar": "إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ", "en": "It is You we worship and You we ask for help.",                "ref": "1:5",  "surah": 1,  "ayah": 5},
+        {"ar": "إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ", "en": "It is You we worship\nand You we ask for help.", "ref": "1:5",  "surah": 1,  "ayah": 5},
         {"ar": "اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ",       "en": "Guide us to the straight path.",                                 "ref": "1:6",  "surah": 1,  "ayah": 6},
         {"ar": "صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ", "en": "The path of those You have blessed, not those who have earned angernor those who are astray.", "ref": "1:7", "surah": 1, "ayah": 7},
     ]},
 
     # 1 ─ La patience et l'espoir — Al-Inshirah
-    {"title": "Patience and Hope", "verses": [
+    {"title": "La patience et l'espoir", "verses": [
         {"ar": "أَلَمْ نَشْرَحْ لَكَ صَدْرَكَ",             "en": "Did We not expandfor you your chest?",                         "ref": "94:1", "surah": 94, "ayah": 1},
         {"ar": "وَوَضَعْنَا عَنكَ وِزْرَكَ",               "en": "And removed from youyour burden?",                              "ref": "94:2", "surah": 94, "ayah": 2},
-        {"ar": "الَّذِي أَنقَضَ ظَهْرَكَ",                 "en": "Which had weighed heavily upon your back?",                      "ref": "94:3", "surah": 94, "ayah": 3},
+        {"ar": "الَّذِي أَنقَضَ ظَهْرَكَ",                 "en": "Which had weighed\nheavily upon your back?", "ref": "94:3", "surah": 94, "ayah": 3},
         {"ar": "وَرَفَعْنَا لَكَ ذِكْرَكَ",                "en": "And raised highyour repute?",                                    "ref": "94:4", "surah": 94, "ayah": 4},
-        {"ar": "فَإِنَّ مَعَ الْعُسْرِ يُسْرًا",           "en": "For indeed, with hardship will be ease.",                        "ref": "94:5", "surah": 94, "ayah": 5},
-        {"ar": "إِنَّ مَعَ الْعُسْرِ يُسْرًا",             "en": "Indeed, with hardship will be ease.",                            "ref": "94:6", "surah": 94, "ayah": 6},
-        {"ar": "فَإِذَا فَرَغْتَ فَانصَبْ",                "en": "So when you have finished your duties, then stand up.",           "ref": "94:7", "surah": 94, "ayah": 7},
-        {"ar": "وَإِلَىٰ رَبِّكَ فَارْغَبْ",               "en": "And to your Lord direct your longing.",                          "ref": "94:8", "surah": 94, "ayah": 8},
+        {"ar": "فَإِنَّ مَعَ الْعُسْرِ يُسْرًا",           "en": "For indeed, with hardship\nwill be ease.", "ref": "94:5", "surah": 94, "ayah": 5},
+        {"ar": "إِنَّ مَعَ الْعُسْرِ يُسْرًا",             "en": "Indeed, with hardship\nwill be ease.", "ref": "94:6", "surah": 94, "ayah": 6},
+        {"ar": "فَإِذَا فَرَغْتَ فَانصَبْ",                "en": "So when you have finished\nyour duties, then stand up.", "ref": "94:7", "surah": 94, "ayah": 7},
+        {"ar": "وَإِلَىٰ رَبِّكَ فَارْغَبْ",               "en": "And to your Lord\ndirect your longing.", "ref": "94:8", "surah": 94, "ayah": 8},
     ]},
 
     # 2 ─ La confiance en Allah — At-Talaq
-    {"title": "Trust in Allah", "verses": [
-        {"ar": "وَمَن يَتَّقِ اللّٰهَ يَجْعَل لَّهُ مَخْرَجًا", "en": "And whoever fears Allah, He will make for him a way out.", "ref": "65:2", "surah": 65, "ayah": 2},
+    {"title": "La confiance en Allah", "verses": [
+        {"ar": "وَمَن يَتَّقِ اللّٰهَ يَجْعَل لَّهُ مَخْرَجًا", "en": "And whoever fears Allah,\nHe will make for him a way out.", "ref": "65:2", "surah": 65, "ayah": 2},
         {"ar": "وَيَرْزُقْهُ مِنْ حَيْثُ لَا يَحْتَسِبُ",       "en": "And will provide for himfrom where he does not expect.",  "ref": "65:3", "surah": 65, "ayah": 3},
-        {"ar": "وَمَن يَتَوَكَّلْ عَلَى اللّٰهِ فَهُوَ حَسْبُهُ", "en": "Whoever relies upon Allah — He is sufficient for him.", "ref": "65:3b","surah": 65, "ayah": 3},
-        {"ar": "إِنَّ اللّٰهَ بَالِغُ أَمْرِهِ",              "en": "Indeed, Allah will accomplish His purpose.",                  "ref": "65:3c","surah": 65, "ayah": 3},
-        {"ar": "قَدْ جَعَلَ اللّٰهُ لِكُلِّ شَيْءٍ قَدْرًا",  "en": "Allah has already set a decreed extent for everything.", "ref": "65:3d","surah": 65, "ayah": 3},
+        {"ar": "وَمَن يَتَوَكَّلْ عَلَى اللّٰهِ فَهُوَ حَسْبُهُ", "en": "Whoever relies upon Allah —\nHe is sufficient for him.", "ref": "65:3b","surah": 65, "ayah": 3},
+        {"ar": "إِنَّ اللّٰهَ بَالِغُ أَمْرِهِ",              "en": "Indeed, Allah will accomplish\nHis purpose.", "ref": "65:3c","surah": 65, "ayah": 3},
+        {"ar": "قَدْ جَعَلَ اللّٰهُ لِكُلِّ شَيْءٍ قَدْرًا",  "en": "Allah has already set\na decreed extent for everything.", "ref": "65:3d","surah": 65, "ayah": 3},
     ]},
 
     # 3 ─ Al-Ikhlas complète
-    {"title": "Al-Ikhlas — Sincerity", "verses": [
+    {"title": "Al-Ikhlas — La Pureté", "verses": [
         {"ar": "قُلْ هُوَ اللّٰهُ أَحَدٌ",               "en": "Say: He is Allah, [who is] One.",               "ref": "112:1", "surah": 112, "ayah": 1},
         {"ar": "اللّٰهُ الصَّمَدُ",                      "en": "Allah, the Eternal Refuge.",                    "ref": "112:2", "surah": 112, "ayah": 2},
         {"ar": "لَمْ يَلِدْ وَلَمْ يُولَدْ",             "en": "He neither begetsnor is born.",                "ref": "112:3", "surah": 112, "ayah": 3},
-        {"ar": "وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ",      "en": "Nor is there to Him any equivalent.",           "ref": "112:4", "surah": 112, "ayah": 4},
+        {"ar": "وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ",      "en": "Nor is there to Him\nany equivalent.", "ref": "112:4", "surah": 112, "ayah": 4},
     ]},
 
     # 4 ─ Ayat Al-Kursi
-    {"title": "Ayat Al-Kursi — The Throne Verse", "verses": [
-        {"ar": "اللّٰهُ لَا إِلٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ", "en": "Allah — there is no deity except Him, the Ever-Living, the Sustainer.", "ref": "2:255a", "surah": 2, "ayah": 255},
+    {"title": "Ayat Al-Kursi", "verses": [
+        {"ar": "اللّٰهُ لَا إِلٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ", "en": "Allah — there is no deity except Him,\nthe Ever-Living, the Sustainer.", "ref": "2:255a", "surah": 2, "ayah": 255},
         {"ar": "لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ",       "en": "Neither drowsiness overtakes Himnor sleep.",                     "ref": "2:255b", "surah": 2, "ayah": 255},
         {"ar": "لَّهُ مَا فِي السَّمٰوَاتِ وَمَا فِي الْأَرْضِ", "en": "To Him belongs whatever isin the heavens and earth.",       "ref": "2:255c", "surah": 2, "ayah": 255},
-        {"ar": "مَن ذَا الَّذِي يَشْفَعُ عِندَهُ إِلَّا بِإِذْنِهِ", "en": "Who is it that can intercede with Him except by His permission?", "ref": "2:255d", "surah": 2, "ayah": 255},
+        {"ar": "مَن ذَا الَّذِي يَشْفَعُ عِندَهُ إِلَّا بِإِذْنِهِ", "en": "Who is it that can intercede\nwith Him except by His permission?", "ref": "2:255d", "surah": 2, "ayah": 255},
         {"ar": "يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ", "en": "He knows what is before themand what is behind them.",        "ref": "2:255e", "surah": 2, "ayah": 255},
         {"ar": "وَلَا يُحِيطُونَ بِشَيْءٍ مِّنْ عِلْمِهِ إِلَّا بِمَا شَاءَ", "en": "And they encompass nothingof His knowledge except what He wills.", "ref": "2:255f", "surah": 2, "ayah": 255},
         {"ar": "وَسِعَ كُرْسِيُّهُ السَّمٰوَاتِ وَالْأَرْضَ", "en": "His Throne extends overthe heavens and the earth.",          "ref": "2:255g", "surah": 2, "ayah": 255},
-        {"ar": "وَلَا يَئُودُهُ حِفْظُهُمَا وَهُوَ الْعَلِيُّ الْعَظِيمُ", "en": "And their preservation does not tire Him. He is the Most High, the Most Great.", "ref": "2:255h", "surah": 2, "ayah": 255},
+        {"ar": "وَلَا يَئُودُهُ حِفْظُهُمَا وَهُوَ الْعَلِيُّ الْعَظِيمُ", "en": "And their preservation does not tire Him.\nHe is the Most High, the Most Great.", "ref": "2:255h", "surah": 2, "ayah": 255},
     ]},
 
     # 5 ─ Lumière et guidance
-    {"title": "Light and Guidance", "verses": [
+    {"title": "Lumière et guidance", "verses": [
         {"ar": "اللّٰهُ نُورُ السَّمٰوَاتِ وَالْأَرْضِ",   "en": "Allah is the Lightof the heavens and the earth.",              "ref": "24:35a", "surah": 24, "ayah": 35},
         {"ar": "مَثَلُ نُورِهِ كَمِشْكَاةٍ فِيهَا مِصْبَاحٌ", "en": "The example of His light is likea niche within which is a lamp.",    "ref": "24:35b", "surah": 24, "ayah": 35},
         {"ar": "الْمِصْبَاحُ فِي زُجَاجَةٍ",               "en": "The lamp is within glass.",                                     "ref": "24:35c", "surah": 24, "ayah": 35},
@@ -230,24 +230,24 @@ PASSAGES = [
     ]},
 
     # 6 ─ La création — Sourate Qaf
-    {"title": "The Greatness of Creation", "verses": [
+    {"title": "La grandeur de la création", "verses": [
         {"ar": "أَفَلَمْ يَنظُرُوا إِلَى السَّمَاءِ فَوْقَهُمْ", "en": "Do they not look at the sky above them —", "ref": "50:6a", "surah": 50, "ayah": 6},
         {"ar": "كَيْفَ بَنَيْنَاهَا وَزَيَّنَّاهَا",           "en": "how We have built itand adorned it?",                          "ref": "50:6b", "surah": 50, "ayah": 6},
-        {"ar": "وَمَا لَهَا مِن فُرُوجٍ",                     "en": "And there are no rifts within it.",                             "ref": "50:6c", "surah": 50, "ayah": 6},
+        {"ar": "وَمَا لَهَا مِن فُرُوجٍ",                     "en": "And there are no rifts\nwithin it.", "ref": "50:6c", "surah": 50, "ayah": 6},
         {"ar": "وَالْأَرْضَ مَدَدْنَاهَا وَأَلْقَيْنَا فِيهَا رَوَاسِيَ", "en": "And the earth — We spread it outand cast therein firmly set mountains.", "ref": "50:7a", "surah": 50, "ayah": 7},
-        {"ar": "وَأَنبَتْنَا فِيهَا مِن كُلِّ زَوْجٍ بَهِيجٍ", "en": "And We caused to grow therein every beautiful kind of plant.", "ref": "50:7b", "surah": 50, "ayah": 7},
+        {"ar": "وَأَنبَتْنَا فِيهَا مِن كُلِّ زَوْجٍ بَهِيجٍ", "en": "And We caused to grow therein\nevery beautiful kind of plant.", "ref": "50:7b", "surah": 50, "ayah": 7},
     ]},
 
     # 7 ─ La miséricorde divine — Az-Zumar 53
-    {"title": "Divine Mercy", "verses": [
-        {"ar": "قُلْ يَا عِبَادِيَ الَّذِينَ أَسْرَفُوا عَلَىٰ أَنفُسِهِمْ", "en": "Say: O My servants who have transgressed against themselves,", "ref": "39:53a", "surah": 39, "ayah": 53},
+    {"title": "La miséricorde divine", "verses": [
+        {"ar": "قُلْ يَا عِبَادِيَ الَّذِينَ أَسْرَفُوا عَلَىٰ أَنفُسِهِمْ", "en": "Say: O My servants who have\ntransgressed against themselves,", "ref": "39:53a", "surah": 39, "ayah": 53},
         {"ar": "لَا تَقْنَطُوا مِن رَّحْمَةِ اللّٰهِ",       "en": "do not despairof the mercy of Allah.",                         "ref": "39:53b", "surah": 39, "ayah": 53},
-        {"ar": "إِنَّ اللّٰهَ يَغْفِرُ الذُّنُوبَ جَمِيعًا", "en": "Indeed, Allah forgives all sins.",                              "ref": "39:53c", "surah": 39, "ayah": 53},
+        {"ar": "إِنَّ اللّٰهَ يَغْفِرُ الذُّنُوبَ جَمِيعًا", "en": "Indeed, Allah forgives\nall sins.", "ref": "39:53c", "surah": 39, "ayah": 53},
         {"ar": "إِنَّهُ هُوَ الْغَفُورُ الرَّحِيمُ",          "en": "Indeed, it is He who isthe Forgiving, the Merciful.",           "ref": "39:53d", "surah": 39, "ayah": 53},
     ]},
 
     # 8 ─ Al-Falaq — L'aube
-    {"title": "Al-Falaq — The Daybreak", "verses": [
+    {"title": "Al-Falaq — L'Aube", "verses": [
         {"ar": "قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ",             "en": "Say: I seek refugein the Lord of the daybreak,",               "ref": "113:1", "surah": 113, "ayah": 1},
         {"ar": "مِن شَرِّ مَا خَلَقَ",                       "en": "From the evilof what He created,",                           "ref": "113:2", "surah": 113, "ayah": 2},
         {"ar": "وَمِن شَرِّ غَاسِقٍ إِذَا وَقَبَ",           "en": "And from the evilof darkness when it settles,",               "ref": "113:3", "surah": 113, "ayah": 3},
@@ -256,7 +256,7 @@ PASSAGES = [
     ]},
 
     # 9 ─ An-Nas — Les hommes
-    {"title": "An-Nas — Mankind", "verses": [
+    {"title": "An-Nas — Les Hommes", "verses": [
         {"ar": "قُلْ أَعُوذُ بِرَبِّ النَّاسِ",              "en": "Say: I seek refugein the Lord of mankind,",                    "ref": "114:1", "surah": 114, "ayah": 1},
         {"ar": "مَلِكِ النَّاسِ",                             "en": "The Sovereign of mankind,",                                     "ref": "114:2", "surah": 114, "ayah": 2},
         {"ar": "إِلٰهِ النَّاسِ",                             "en": "The God of mankind,",                                           "ref": "114:3", "surah": 114, "ayah": 3},
@@ -266,137 +266,137 @@ PASSAGES = [
     ]},
 
     # 10 ─ La gratitude — Ibrahim 7
-    {"title": "Gratitude", "verses": [
+    {"title": "La gratitude", "verses": [
         {"ar": "وَإِذْ تَأَذَّنَ رَبُّكُمْ",                 "en": "And when your Lord proclaimed:",                                 "ref": "14:7a", "surah": 14, "ayah": 7},
-        {"ar": "لَئِن شَكَرْتُمْ لَأَزِيدَنَّكُمْ",         "en": "If you are grateful, I will surely increase you in favor.",    "ref": "14:7b", "surah": 14, "ayah": 7},
-        {"ar": "وَلَئِن كَفَرْتُمْ إِنَّ عَذَابِي لَشَدِيدٌ", "en": "But if you deny, indeed, My punishment is severe.", "ref": "14:7c", "surah": 14, "ayah": 7},
+        {"ar": "لَئِن شَكَرْتُمْ لَأَزِيدَنَّكُمْ",         "en": "If you are grateful,\nI will surely increase you in favor.", "ref": "14:7b", "surah": 14, "ayah": 7},
+        {"ar": "وَلَئِن كَفَرْتُمْ إِنَّ عَذَابِي لَشَدِيدٌ", "en": "But if you deny,\nindeed, My punishment is severe.", "ref": "14:7c", "surah": 14, "ayah": 7},
         {"ar": "فَإِنَّ اللّٰهَ لَغَنِيٌّ حَمِيدٌ",         "en": "Indeed, Allah is Free of needand Praiseworthy.",               "ref": "14:8b", "surah": 14, "ayah": 8},
     ]},
 
     # 11 ─ Al-Mulk — La Royauté
-    {"title": "Al-Mulk — Sovereignty", "verses": [
-        {"ar": "تَبَارَكَ الَّذِي بِيَدِهِ الْمُلْكُ وَهُوَ عَلَىٰ كُلِّ شَيْءٍ قَدِيرٌ", "en": "Blessed is He in whose hand is dominion, and He is over all things competent.", "ref": "67:1", "surah": 67, "ayah": 1},
+    {"title": "Al-Mulk — La Royauté", "verses": [
+        {"ar": "تَبَارَكَ الَّذِي بِيَدِهِ الْمُلْكُ وَهُوَ عَلَىٰ كُلِّ شَيْءٍ قَدِيرٌ", "en": "Blessed is He in whose hand is dominion,\nand He is over all things competent.", "ref": "67:1", "surah": 67, "ayah": 1},
         {"ar": "الَّذِي خَلَقَ الْمَوْتَ وَالْحَيَاةَ",     "en": "He who created deathand life to test you —",                   "ref": "67:2a", "surah": 67, "ayah": 2},
         {"ar": "لِيَبْلُوَكُمْ أَيُّكُمْ أَحْسَنُ عَمَلًا", "en": "which of you is best in deed.",                                  "ref": "67:2b", "surah": 67, "ayah": 2},
-        {"ar": "وَهُوَ الْعَزِيزُ الْغَفُورُ",               "en": "And He is the Exalted in Might, the Forgiving.",               "ref": "67:2c", "surah": 67, "ayah": 2},
+        {"ar": "وَهُوَ الْعَزِيزُ الْغَفُورُ",               "en": "And He is the Exalted in Might,\nthe Forgiving.", "ref": "67:2c", "surah": 67, "ayah": 2},
         {"ar": "الَّذِي خَلَقَ سَبْعَ سَمٰوَاتٍ طِبَاقًا",  "en": "He who created seven heavensin layers.",                       "ref": "67:3a", "surah": 67, "ayah": 3},
-        {"ar": "مَّا تَرَىٰ فِي خَلْقِ الرَّحْمٰنِ مِن تَفَاوُتٍ", "en": "You do not see in the creation of the Most Merciful any inconsistency.", "ref": "67:3b", "surah": 67, "ayah": 3},
+        {"ar": "مَّا تَرَىٰ فِي خَلْقِ الرَّحْمٰنِ مِن تَفَاوُتٍ", "en": "You do not see in the creation\nof the Most Merciful any inconsistency.", "ref": "67:3b", "surah": 67, "ayah": 3},
     ]},
 
     # 12 ─ Al-Baqarah 286 — Le pardon
-    {"title": "Forgiveness and Mercy", "verses": [
-        {"ar": "لَا يُكَلِّفُ اللّٰهُ نَفْسًا إِلَّا وُسْعَهَا", "en": "Allah does not burden a soul beyond that it can bear.", "ref": "2:286a", "surah": 2, "ayah": 286},
+    {"title": "Le pardon et la miséricorde", "verses": [
+        {"ar": "لَا يُكَلِّفُ اللّٰهُ نَفْسًا إِلَّا وُسْعَهَا", "en": "Allah does not burden a soul\nbeyond that it can bear.", "ref": "2:286a", "surah": 2, "ayah": 286},
         {"ar": "رَبَّنَا لَا تُؤَاخِذْنَا إِن نَّسِينَا أَوْ أَخْطَأْنَا", "en": "Our Lord, do not impose blame on usif we have forgotten or erred.", "ref": "2:286b", "surah": 2, "ayah": 286},
         {"ar": "رَبَّنَا وَلَا تَحْمِلْ عَلَيْنَا إِصْرًا",    "en": "Our Lord, and lay not upon usa burden like that You laid upon those before us.", "ref": "2:286c", "surah": 2, "ayah": 286},
         {"ar": "رَبَّنَا وَلَا تُحَمِّلْنَا مَا لَا طَاقَةَ لَنَا بِهِ", "en": "Our Lord, and burden us notwith that which we have no ability to bear.", "ref": "2:286d", "surah": 2, "ayah": 286},
-        {"ar": "وَاعْفُ عَنَّا وَاغْفِرْ لَنَا وَارْحَمْنَا", "en": "And pardon us, forgive us, and have mercy upon us.",           "ref": "2:286e", "surah": 2, "ayah": 286},
-        {"ar": "أَنتَ مَوْلَانَا فَانصُرْنَا عَلَى الْقَوْمِ الْكَافِرِينَ", "en": "You are our protector, so give us victory over the disbelieving people.", "ref": "2:286f", "surah": 2, "ayah": 286},
+        {"ar": "وَاعْفُ عَنَّا وَاغْفِرْ لَنَا وَارْحَمْنَا", "en": "And pardon us,\nforgive us, and have mercy upon us.", "ref": "2:286e", "surah": 2, "ayah": 286},
+        {"ar": "أَنتَ مَوْلَانَا فَانصُرْنَا عَلَى الْقَوْمِ الْكَافِرِينَ", "en": "You are our protector,\nso give us victory over the disbelieving people.", "ref": "2:286f", "surah": 2, "ayah": 286},
     ]},
 
     # 13 ─ Rappel du Seigneur — Ar-Ra'd 28
-    {"title": "Peace of the Heart", "verses": [
+    {"title": "La paix du cœur", "verses": [
         {"ar": "الَّذِينَ آمَنُوا وَتَطْمَئِنُّ قُلُوبُهُم بِذِكْرِ اللّٰهِ", "en": "Those who believe and whose heartsare assured by the remembrance of Allah.", "ref": "13:28a", "surah": 13, "ayah": 28},
-        {"ar": "أَلَا بِذِكْرِ اللّٰهِ تَطْمَئِنُّ الْقُلُوبُ", "en": "Unquestionably, by the remembrance of Allah, hearts are assured.", "ref": "13:28b", "surah": 13, "ayah": 28},
-        {"ar": "الَّذِينَ آمَنُوا وَعَمِلُوا الصَّالِحَاتِ",   "en": "Those who believed and did righteous deeds —",                  "ref": "13:29a", "surah": 13, "ayah": 29},
+        {"ar": "أَلَا بِذِكْرِ اللّٰهِ تَطْمَئِنُّ الْقُلُوبُ", "en": "Unquestionably, by the remembrance\nof Allah, hearts are assured.", "ref": "13:28b", "surah": 13, "ayah": 28},
+        {"ar": "الَّذِينَ آمَنُوا وَعَمِلُوا الصَّالِحَاتِ",   "en": "Those who believed\nand did righteous deeds —", "ref": "13:29a", "surah": 13, "ayah": 29},
         {"ar": "طُوبَىٰ لَهُمْ وَحُسْنُ مَآبٍ",               "en": "Happiness is for themand a beautiful place of return.",          "ref": "13:29b", "surah": 13, "ayah": 29},
     ]},
 
     # 14 ─ Yusuf 87 — Ne pas désespérer
-    {"title": "Never Lose Hope", "verses": [
+    {"title": "Ne jamais désespérer", "verses": [
         {"ar": "يَا بَنِيَّ اذْهَبُوا فَتَحَسَّسُوا مِن يُوسُفَ وَأَخِيهِ", "en": "O my sons, go and searchfor Joseph and his brother,", "ref": "12:87a", "surah": 12, "ayah": 87},
         {"ar": "وَلَا تَيْأَسُوا مِن رَّوْحِ اللّٰهِ", "en": "and do not despairof relief from Allah.", "ref": "12:87b", "surah": 12, "ayah": 87},
-        {"ar": "إِنَّهُ لَا يَيْأَسُ مِن رَّوْحِ اللّٰهِ إِلَّا الْقَوْمُ الْكَافِرُونَ", "en": "Indeed, no one despairs of relief from Allah except the disbelieving people.", "ref": "12:87c", "surah": 12, "ayah": 87},
+        {"ar": "إِنَّهُ لَا يَيْأَسُ مِن رَّوْحِ اللّٰهِ إِلَّا الْقَوْمُ الْكَافِرُونَ", "en": "Indeed, no one despairs\nof relief from Allah except\nthe disbelieving people.", "ref": "12:87c", "surah": 12, "ayah": 87},
     ]},
 
     # 15 ─ Al-Baqarah 153 — Patience et prière
-    {"title": "Patience and Prayer", "verses": [
-        {"ar": "يَا أَيُّهَا الَّذِينَ آمَنُوا اسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", "en": "O you who have believed, seek help through patience and prayer.", "ref": "2:153a", "surah": 2, "ayah": 153},
+    {"title": "La patience et la prière", "verses": [
+        {"ar": "يَا أَيُّهَا الَّذِينَ آمَنُوا اسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", "en": "O you who have believed,\nseek help through patience\nand prayer.", "ref": "2:153a", "surah": 2, "ayah": 153},
         {"ar": "إِنَّ اللّٰهَ مَعَ الصَّابِرِينَ", "en": "Indeed, Allah is withthe patient.", "ref": "2:153b", "surah": 2, "ayah": 153},
     ]},
 
     # 16 ─ Al-Hajj 46 — Le cœur qui voit
-    {"title": "The Heart that Understands", "verses": [
-        {"ar": "أَفَلَمْ يَسِيرُوا فِي الْأَرْضِ", "en": "Have they not traveled through the land?", "ref": "22:46a", "surah": 22, "ayah": 46},
+    {"title": "Le cœur qui comprend", "verses": [
+        {"ar": "أَفَلَمْ يَسِيرُوا فِي الْأَرْضِ", "en": "Have they not traveled\nthrough the land?", "ref": "22:46a", "surah": 22, "ayah": 46},
         {"ar": "فَتَكُونَ لَهُمْ قُلُوبٌ يَعْقِلُونَ بِهَا", "en": "So that their heartsmay reason with it,", "ref": "22:46b", "surah": 22, "ayah": 46},
         {"ar": "فَإِنَّهَا لَا تَعْمَى الْأَبْصَارُ", "en": "For indeed, it is not the eyesthat are blinded,", "ref": "22:46c", "surah": 22, "ayah": 46},
-        {"ar": "وَلَٰكِن تَعْمَى الْقُلُوبُ الَّتِي فِي الصُّدُورِ", "en": "But it is the hearts, which are in the chests, that are blinded.", "ref": "22:46d", "surah": 22, "ayah": 46},
+        {"ar": "وَلَٰكِن تَعْمَى الْقُلُوبُ الَّتِي فِي الصُّدُورِ", "en": "But it is the hearts,\nwhich are in the chests,\nthat are blinded.", "ref": "22:46d", "surah": 22, "ayah": 46},
     ]},
 
     # 17 ─ Al-Imran 173 — La confiance absolue
-    {"title": "Hasbunallah — Allah is Enough", "verses": [
+    {"title": "Hasbunallah", "verses": [
         {"ar": "الَّذِينَ قَالَ لَهُمُ النَّاسُ إِنَّ النَّاسَ قَدْ جَمَعُوا لَكُمْ", "en": "Those to whom people said:the people have gathered against you,", "ref": "3:173a", "surah": 3, "ayah": 173},
-        {"ar": "فَاخْشَوْهُمْ فَزَادَهُمْ إِيمَانًا", "en": "So fear them — but it only increased them in faith,", "ref": "3:173b", "surah": 3, "ayah": 173},
+        {"ar": "فَاخْشَوْهُمْ فَزَادَهُمْ إِيمَانًا", "en": "So fear them —\nbut it only increased them\nin faith,", "ref": "3:173b", "surah": 3, "ayah": 173},
         {"ar": "وَقَالُوا حَسْبُنَا اللّٰهُ وَنِعْمَ الْوَكِيلُ", "en": "And they said:Allah is sufficient for us, and He is the best disposer.", "ref": "3:173c", "surah": 3, "ayah": 173},
     ]},
 
     # 18 ─ Az-Zumar 9 — La science et l'adoration
-    {"title": "Knowledge and Prostration", "verses": [
-        {"ar": "أَمَّنْ هُوَ قَانِتٌ آنَاءَ اللَّيْلِ سَاجِدًا وَقَائِمًا", "en": "Is one who is devout in hours of the night, prostrating and standing in prayer,", "ref": "39:9a", "surah": 39, "ayah": 9},
-        {"ar": "يَحْذَرُ الْآخِرَةَ وَيَرْجُو رَحْمَةَ رَبِّهِ", "en": "Fearing the Hereafter and hoping for the mercy of his Lord?", "ref": "39:9b", "surah": 39, "ayah": 9},
+    {"title": "Savoir et se prosterner", "verses": [
+        {"ar": "أَمَّنْ هُوَ قَانِتٌ آنَاءَ اللَّيْلِ سَاجِدًا وَقَائِمًا", "en": "Is one who is devout in hours\nof the night, prostrating\nand standing in prayer,", "ref": "39:9a", "surah": 39, "ayah": 9},
+        {"ar": "يَحْذَرُ الْآخِرَةَ وَيَرْجُو رَحْمَةَ رَبِّهِ", "en": "Fearing the Hereafter\nand hoping for the mercy\nof his Lord?", "ref": "39:9b", "surah": 39, "ayah": 9},
         {"ar": "قُلْ هَلْ يَسْتَوِي الَّذِينَ يَعْلَمُونَ وَالَّذِينَ لَا يَعْلَمُونَ", "en": "Say: Are those who knowequal to those who do not know?", "ref": "39:9c", "surah": 39, "ayah": 9},
     ]},
 
     # 19 ─ Al-Imran 8 — Ne pas faire dévier les cœurs
-    {"title": "Steadfast Hearts", "verses": [
-        {"ar": "رَبَّنَا لَا تُزِغْ قُلُوبَنَا بَعْدَ إِذْ هَدَيْتَنَا", "en": "Our Lord, do not let our hearts deviate after You have guided us,", "ref": "3:8a", "surah": 3, "ayah": 8},
-        {"ar": "وَهَبْ لَنَا مِن لَّدُنكَ رَحْمَةً", "en": "And grant us from Yourself mercy.", "ref": "3:8b", "surah": 3, "ayah": 8},
+    {"title": "Affermir les cœurs", "verses": [
+        {"ar": "رَبَّنَا لَا تُزِغْ قُلُوبَنَا بَعْدَ إِذْ هَدَيْتَنَا", "en": "Our Lord, do not let\nour hearts deviate after\nYou have guided us,", "ref": "3:8a", "surah": 3, "ayah": 8},
+        {"ar": "وَهَبْ لَنَا مِن لَّدُنكَ رَحْمَةً", "en": "And grant us from Yourself\nmercy.", "ref": "3:8b", "surah": 3, "ayah": 8},
         {"ar": "إِنَّكَ أَنتَ الْوَهَّابُ", "en": "Indeed, You are the Bestower.", "ref": "3:8c", "surah": 3, "ayah": 8},
     ]},
 
     # 20 ─ Al-Muzzammil 8 — Invoquer et se confier
-    {"title": "Turning to Allah", "verses": [
-        {"ar": "وَاذْكُرِ اسْمَ رَبِّكَ وَتَبَتَّلْ إِلَيْهِ تَبْتِيلًا", "en": "And remember the name of your Lord and devote yourself to Him with complete devotion.", "ref": "73:8", "surah": 73, "ayah": 8},
-        {"ar": "رَّبُّ الْمَشْرِقِ وَالْمَغْرِبِ لَا إِلَٰهَ إِلَّا هُوَ", "en": "Lord of the East and the West — there is no deity except Him,", "ref": "73:9a", "surah": 73, "ayah": 9},
-        {"ar": "فَاتَّخِذْهُ وَكِيلًا", "en": "So take Him as Disposer of your affairs.", "ref": "73:9b", "surah": 73, "ayah": 9},
+    {"title": "Se tourner vers Allah", "verses": [
+        {"ar": "وَاذْكُرِ اسْمَ رَبِّكَ وَتَبَتَّلْ إِلَيْهِ تَبْتِيلًا", "en": "And remember the name\nof your Lord and devote yourself\nto Him with complete devotion.", "ref": "73:8", "surah": 73, "ayah": 8},
+        {"ar": "رَّبُّ الْمَشْرِقِ وَالْمَغْرِبِ لَا إِلَٰهَ إِلَّا هُوَ", "en": "Lord of the East and the West —\nthere is no deity except Him,", "ref": "73:9a", "surah": 73, "ayah": 9},
+        {"ar": "فَاتَّخِذْهُ وَكِيلًا", "en": "So take Him as Disposer\nof your affairs.", "ref": "73:9b", "surah": 73, "ayah": 9},
     ]},
 
     # 21 ─ Al-Baqarah 186 — Allah répond
-    {"title": "Allah Hears Your Prayer", "verses": [
+    {"title": "Allah entend ta prière", "verses": [
         {"ar": "وَإِذَا سَأَلَكَ عِبَادِي عَنِّي فَإِنِّي قَرِيبٌ", "en": "And when My servants ask youabout Me — indeed I am near.", "ref": "2:186a", "surah": 2, "ayah": 186},
-        {"ar": "أُجِيبُ دَعْوَةَ الدَّاعِ إِذَا دَعَانِ", "en": "I respond to the invocation of the supplicant when he calls Me.", "ref": "2:186b", "surah": 2, "ayah": 186},
+        {"ar": "أُجِيبُ دَعْوَةَ الدَّاعِ إِذَا دَعَانِ", "en": "I respond to the invocation\nof the supplicant when he calls Me.", "ref": "2:186b", "surah": 2, "ayah": 186},
         {"ar": "فَلْيَسْتَجِيبُوا لِي وَلْيُؤْمِنُوا بِي", "en": "So let them respond to Meand believe in Me,", "ref": "2:186c", "surah": 2, "ayah": 186},
         {"ar": "لَعَلَّهُمْ يَرْشُدُونَ", "en": "That they may be guided.", "ref": "2:186d", "surah": 2, "ayah": 186},
     ]},
 
     # 22 ─ Fussilat 30 — Les anges descendent
-    {"title": "The Angels and the Believers", "verses": [
-        {"ar": "إِنَّ الَّذِينَ قَالُوا رَبُّنَا اللّٰهُ ثُمَّ اسْتَقَامُوا", "en": "Indeed, those who said our Lord is Allah and then stayed on course —", "ref": "41:30a", "surah": 41, "ayah": 30},
-        {"ar": "تَتَنَزَّلُ عَلَيْهِمُ الْمَلَائِكَةُ", "en": "The angels will descend upon them,", "ref": "41:30b", "surah": 41, "ayah": 30},
+    {"title": "Les anges et les croyants", "verses": [
+        {"ar": "إِنَّ الَّذِينَ قَالُوا رَبُّنَا اللّٰهُ ثُمَّ اسْتَقَامُوا", "en": "Indeed, those who said\nour Lord is Allah and then\nstayed on course —", "ref": "41:30a", "surah": 41, "ayah": 30},
+        {"ar": "تَتَنَزَّلُ عَلَيْهِمُ الْمَلَائِكَةُ", "en": "The angels will descend\nupon them,", "ref": "41:30b", "surah": 41, "ayah": 30},
         {"ar": "أَلَّا تَخَافُوا وَلَا تَحْزَنُوا", "en": "Saying: do not fearand do not grieve,", "ref": "41:30c", "surah": 41, "ayah": 30},
         {"ar": "وَأَبْشِرُوا بِالْجَنَّةِ الَّتِي كُنتُمْ تُوعَدُونَ", "en": "But receive good tidingsof Paradise which youwere promised.", "ref": "41:30d", "surah": 41, "ayah": 30},
     ]},
 
     # 23 ─ Al-Hashr 22-23 — Les noms d'Allah
-    {"title": "The Beautiful Names of Allah", "verses": [
-        {"ar": "هُوَ اللّٰهُ الَّذِي لَا إِلَٰهَ إِلَّا هُوَ", "en": "He is Allah — there is no deity except Him,", "ref": "59:22a", "surah": 59, "ayah": 22},
+    {"title": "Les beaux noms d'Allah", "verses": [
+        {"ar": "هُوَ اللّٰهُ الَّذِي لَا إِلَٰهَ إِلَّا هُوَ", "en": "He is Allah — there is no deity\nexcept Him,", "ref": "59:22a", "surah": 59, "ayah": 22},
         {"ar": "عَالِمُ الْغَيْبِ وَالشَّهَادَةِ", "en": "Knower of the unseenand the witnessed.", "ref": "59:22b", "surah": 59, "ayah": 22},
-        {"ar": "هُوَ الرَّحْمَٰنُ الرَّحِيمُ", "en": "He is the Most Gracious, the Most Merciful.", "ref": "59:22c", "surah": 59, "ayah": 22},
-        {"ar": "هُوَ اللّٰهُ الَّذِي لَا إِلَٰهَ إِلَّا هُوَ الْمَلِكُ الْقُدُّوسُ السَّلَامُ", "en": "He is Allah — no deity except Him, the Sovereign, the Pure, the Perfection.", "ref": "59:23a", "surah": 59, "ayah": 23},
-        {"ar": "الْمُؤْمِنُ الْمُهَيْمِنُ الْعَزِيزُ الْجَبَّارُ الْمُتَكَبِّرُ", "en": "The Grantor of security, the Overseer, the Exalted, the Compeller, the Superior.", "ref": "59:23b", "surah": 59, "ayah": 23},
+        {"ar": "هُوَ الرَّحْمَٰنُ الرَّحِيمُ", "en": "He is the Most Gracious,\nthe Most Merciful.", "ref": "59:22c", "surah": 59, "ayah": 22},
+        {"ar": "هُوَ اللّٰهُ الَّذِي لَا إِلَٰهَ إِلَّا هُوَ الْمَلِكُ الْقُدُّوسُ السَّلَامُ", "en": "He is Allah — no deity except Him,\nthe Sovereign, the Pure,\nthe Perfection.", "ref": "59:23a", "surah": 59, "ayah": 23},
+        {"ar": "الْمُؤْمِنُ الْمُهَيْمِنُ الْعَزِيزُ الْجَبَّارُ الْمُتَكَبِّرُ", "en": "The Grantor of security,\nthe Overseer, the Exalted,\nthe Compeller, the Superior.", "ref": "59:23b", "surah": 59, "ayah": 23},
     ]},
 
     # 24 ─ Al-Duha — Le matin
-    {"title": "Al-Duha — The Morning", "verses": [
+    {"title": "Al-Duha — Le Matin", "verses": [
         {"ar": "وَالضُّحَىٰ", "en": "By the morning brightness,", "ref": "93:1", "surah": 93, "ayah": 1},
         {"ar": "وَاللَّيْلِ إِذَا سَجَىٰ", "en": "And by the night when it covers with darkness,", "ref": "93:2", "surah": 93, "ayah": 2},
-        {"ar": "مَا وَدَّعَكَ رَبُّكَ وَمَا قَلَىٰ", "en": "Your Lord has not taken leave of you, nor has He detested you.", "ref": "93:3", "surah": 93, "ayah": 3},
+        {"ar": "مَا وَدَّعَكَ رَبُّكَ وَمَا قَلَىٰ", "en": "Your Lord has not taken leave of you,\nnor has He detested you.", "ref": "93:3", "surah": 93, "ayah": 3},
         {"ar": "وَلَلْآخِرَةُ خَيْرٌ لَّكَ مِنَ الْأُولَىٰ", "en": "And the Hereafter is better for youthan the first life.", "ref": "93:4", "surah": 93, "ayah": 4},
-        {"ar": "وَلَسَوْفَ يُعْطِيكَ رَبُّكَ فَتَرْضَىٰ", "en": "And your Lord is going to give you, and you will be satisfied.", "ref": "93:5", "surah": 93, "ayah": 5},
+        {"ar": "وَلَسَوْفَ يُعْطِيكَ رَبُّكَ فَتَرْضَىٰ", "en": "And your Lord is going to give you,\nand you will be satisfied.", "ref": "93:5", "surah": 93, "ayah": 5},
         {"ar": "أَلَمْ يَجِدْكَ يَتِيمًا فَآوَىٰ", "en": "Did He not find you an orphanand give refuge?", "ref": "93:6", "surah": 93, "ayah": 6},
         {"ar": "وَوَجَدَكَ ضَالًّا فَهَدَىٰ", "en": "And He found you lostand guided you,", "ref": "93:7", "surah": 93, "ayah": 7},
         {"ar": "وَوَجَدَكَ عَائِلًا فَأَغْنَىٰ", "en": "And He found you poorand made you self-sufficient.", "ref": "93:8", "surah": 93, "ayah": 8},
     ]},
 
     # 25 ─ Al-Kahf 10 — La caverne
-    {"title": "Refuge and Guidance", "verses": [
-        {"ar": "إِذْ أَوَى الْفِتْيَةُ إِلَى الْكَهْفِ فَقَالُوا", "en": "When the youths retreated to the cave and said:", "ref": "18:10a", "surah": 18, "ayah": 10},
+    {"title": "Réfuge et guidance", "verses": [
+        {"ar": "إِذْ أَوَى الْفِتْيَةُ إِلَى الْكَهْفِ فَقَالُوا", "en": "When the youths retreated\nto the cave and said:", "ref": "18:10a", "surah": 18, "ayah": 10},
         {"ar": "رَبَّنَا آتِنَا مِن لَّدُنكَ رَحْمَةً", "en": "Our Lord, grant usfrom Yourself mercy,", "ref": "18:10b", "surah": 18, "ayah": 10},
         {"ar": "وَهَيِّئْ لَنَا مِنْ أَمْرِنَا رَشَدًا", "en": "And prepare for usfrom our affair right guidance.", "ref": "18:10c", "surah": 18, "ayah": 10},
     ]},
 
     # 26 ─ Al-Zilzalah — Le Séisme
-    {"title": "Al-Zilzalah — The Earthquake", "verses": [
-        {"ar": "إِذَا زُلْزِلَتِ الْأَرْضُ زِلْزَالَهَا", "en": "When the earth is shaken with its final earthquake,", "ref": "99:1", "surah": 99, "ayah": 1},
+    {"title": "Al-Zilzalah — Le Séisme", "verses": [
+        {"ar": "إِذَا زُلْزِلَتِ الْأَرْضُ زِلْزَالَهَا", "en": "When the earth is shaken\nwith its final earthquake,", "ref": "99:1", "surah": 99, "ayah": 1},
         {"ar": "وَأَخْرَجَتِ الْأَرْضُ أَثْقَالَهَا", "en": "And the earth brings outits burdens,", "ref": "99:2", "surah": 99, "ayah": 2},
         {"ar": "وَقَالَ الْإِنسَانُ مَا لَهَا", "en": "And man says:what is wrong with it?", "ref": "99:3", "surah": 99, "ayah": 3},
         {"ar": "يَوْمَئِذٍ تُحَدِّثُ أَخْبَارَهَا", "en": "That day, it will reportits news,", "ref": "99:4", "surah": 99, "ayah": 4},
@@ -407,24 +407,24 @@ PASSAGES = [
     ]},
 
     # 27 ─ Al-Asr — Le Temps
-    {"title": "Al-Asr — Time", "verses": [
+    {"title": "Al-Asr — Le Temps", "verses": [
         {"ar": "وَالْعَصْرِ", "en": "By time,", "ref": "103:1", "surah": 103, "ayah": 1},
         {"ar": "إِنَّ الْإِنسَانَ لَفِي خُسْرٍ", "en": "Indeed, mankind is in loss,", "ref": "103:2", "surah": 103, "ayah": 2},
-        {"ar": "إِلَّا الَّذِينَ آمَنُوا وَعَمِلُوا الصَّالِحَاتِ", "en": "Except for those who have believed and done righteous deeds,", "ref": "103:3", "surah": 103, "ayah": 3},
+        {"ar": "إِلَّا الَّذِينَ آمَنُوا وَعَمِلُوا الصَّالِحَاتِ", "en": "Except for those who have believed\nand done righteous deeds,", "ref": "103:3", "surah": 103, "ayah": 3},
         {"ar": "وَتَوَاصَوْا بِالْحَقِّ وَتَوَاصَوْا بِالصَّبْرِ", "en": "And advised each other to truthand advised each other to patience.", "ref": "103:3b", "surah": 103, "ayah": 3},
     ]},
 
     # 28 ─ Al-Qadr — La Nuit du Destin
-    {"title": "Laylat Al-Qadr — Night of Decree", "verses": [
-        {"ar": "إِنَّا أَنزَلْنَاهُ فِي لَيْلَةِ الْقَدْرِ", "en": "Indeed, We sent it down during the Night of Decree.", "ref": "97:1", "surah": 97, "ayah": 1},
+    {"title": "Laylat Al-Qadr", "verses": [
+        {"ar": "إِنَّا أَنزَلْنَاهُ فِي لَيْلَةِ الْقَدْرِ", "en": "Indeed, We sent it down\nduring the Night of Decree.", "ref": "97:1", "surah": 97, "ayah": 1},
         {"ar": "وَمَا أَدْرَاكَ مَا لَيْلَةُ الْقَدْرِ", "en": "And what can make you knowwhat is the Night of Decree?", "ref": "97:2", "surah": 97, "ayah": 2},
-        {"ar": "لَيْلَةُ الْقَدْرِ خَيْرٌ مِّنْ أَلْفِ شَهْرٍ", "en": "The Night of Decree is better than a thousand months.", "ref": "97:3", "surah": 97, "ayah": 3},
-        {"ar": "تَنَزَّلُ الْمَلَائِكَةُ وَالرُّوحُ فِيهَا بِإِذْنِ رَبِّهِم", "en": "The angels and the Spirit descend therein by permission of their Lord.", "ref": "97:4", "surah": 97, "ayah": 4},
+        {"ar": "لَيْلَةُ الْقَدْرِ خَيْرٌ مِّنْ أَلْفِ شَهْرٍ", "en": "The Night of Decree is better\nthan a thousand months.", "ref": "97:3", "surah": 97, "ayah": 3},
+        {"ar": "تَنَزَّلُ الْمَلَائِكَةُ وَالرُّوحُ فِيهَا بِإِذْنِ رَبِّهِم", "en": "The angels and the Spirit descend\ntherein by permission of their Lord.", "ref": "97:4", "surah": 97, "ayah": 4},
         {"ar": "سَلَامٌ هِيَ حَتَّىٰ مَطْلَعِ الْفَجْرِ", "en": "Peace it is untilthe emergence of dawn.", "ref": "97:5", "surah": 97, "ayah": 5},
     ]},
 
     # 29 ─ Ar-Rahman — Le Bienfaiteur (55:1-13, consécutifs)
-    {"title": "Ar-Rahman — The Most Merciful", "verses": [
+    {"title": "Ar-Rahman — Le Bienfaiteur", "verses": [
         {"ar": "الرَّحْمَٰنُ", "en": "The Most Merciful", "ref": "55:1", "surah": 55, "ayah": 1},
         {"ar": "عَلَّمَ الْقُرْآنَ", "en": "Taught the Qur'an,", "ref": "55:2", "surah": 55, "ayah": 2},
         {"ar": "خَلَقَ الْإِنسَانَ", "en": "Created man,", "ref": "55:3", "surah": 55, "ayah": 3},
@@ -441,93 +441,93 @@ PASSAGES = [
     ]},
 
     # 30 ─ Al-Insan — La générosité des croyants
-    {"title": "Sincere Generosity", "verses": [
-        {"ar": "وَيُطْعِمُونَ الطَّعَامَ عَلَىٰ حُبِّهِ مِسْكِينًا وَيَتِيمًا وَأَسِيرًا", "en": "And they give food, in spite of love for it, to the needy, the orphan, and the captive,", "ref": "76:8", "surah": 76, "ayah": 8},
+    {"title": "La générosité sincère", "verses": [
+        {"ar": "وَيُطْعِمُونَ الطَّعَامَ عَلَىٰ حُبِّهِ مِسْكِينًا وَيَتِيمًا وَأَسِيرًا", "en": "And they give food, in spite of love for it,\nto the needy, the orphan, and the captive,", "ref": "76:8", "surah": 76, "ayah": 8},
         {"ar": "إِنَّمَا نُطْعِمُكُمْ لِوَجْهِ اللّٰهِ", "en": "Saying: we feed youonly for the countenance of Allah.", "ref": "76:9a", "surah": 76, "ayah": 9},
         {"ar": "لَا نُرِيدُ مِنكُمْ جَزَاءً وَلَا شُكُورًا", "en": "We wish not from youreward or gratitude.", "ref": "76:9b", "surah": 76, "ayah": 9},
         {"ar": "إِنَّا نَخَافُ مِن رَّبِّنَا يَوْمًا عَبُوسًا قَمْطَرِيرًا", "en": "Indeed, we fear from our Lorda Day austere and distressful.", "ref": "76:10", "surah": 76, "ayah": 10},
     ]},
 
     # 31 ─ Al-Baqarah 45-46 — La patience et la salat
-    {"title": "Salah — The Bond with Allah", "verses": [
-        {"ar": "وَاسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", "en": "And seek help through patience and prayer.", "ref": "2:45a", "surah": 2, "ayah": 45},
-        {"ar": "وَإِنَّهَا لَكَبِيرَةٌ إِلَّا عَلَى الْخَاشِعِينَ", "en": "And indeed it is difficult except for the humbly submissive.", "ref": "2:45b", "surah": 2, "ayah": 45},
+    {"title": "La salat, lien avec Allah", "verses": [
+        {"ar": "وَاسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", "en": "And seek help through\npatience and prayer.", "ref": "2:45a", "surah": 2, "ayah": 45},
+        {"ar": "وَإِنَّهَا لَكَبِيرَةٌ إِلَّا عَلَى الْخَاشِعِينَ", "en": "And indeed it is difficult\nexcept for the humbly submissive.", "ref": "2:45b", "surah": 2, "ayah": 45},
         {"ar": "الَّذِينَ يَظُنُّونَ أَنَّهُم مُّلَاقُو رَبِّهِمْ", "en": "Who are certain that theywill meet their Lord,", "ref": "2:46a", "surah": 2, "ayah": 46},
-        {"ar": "وَأَنَّهُمْ إِلَيْهِ رَاجِعُونَ", "en": "And that they will return to Him.", "ref": "2:46b", "surah": 2, "ayah": 46},
+        {"ar": "وَأَنَّهُمْ إِلَيْهِ رَاجِعُونَ", "en": "And that they will\nreturn to Him.", "ref": "2:46b", "surah": 2, "ayah": 46},
     ]},
 
     # 32 ─ Ibrahim 24-25 — La bonne parole
-    {"title": "The Good Word", "verses": [
-        {"ar": "أَلَمْ تَرَ كَيْفَ ضَرَبَ اللّٰهُ مَثَلًا كَلِمَةً طَيِّبَةً", "en": "Have you not considered how Allah presents an example — a good word,", "ref": "14:24a", "surah": 14, "ayah": 24},
+    {"title": "La bonne parole", "verses": [
+        {"ar": "أَلَمْ تَرَ كَيْفَ ضَرَبَ اللّٰهُ مَثَلًا كَلِمَةً طَيِّبَةً", "en": "Have you not considered how\nAllah presents an example —\na good word,", "ref": "14:24a", "surah": 14, "ayah": 24},
         {"ar": "كَشَجَرَةٍ طَيِّبَةٍ أَصْلُهَا ثَابِتٌ وَفَرْعُهَا فِي السَّمَاءِ", "en": "Like a good tree, whose root is firmly fixedand its branches are toward the sky,", "ref": "14:24b", "surah": 14, "ayah": 24},
-        {"ar": "تُؤْتِي أُكُلَهَا كُلَّ حِينٍ بِإِذْنِ رَبِّهَا", "en": "Producing its fruit every season by permission of its Lord.", "ref": "14:25a", "surah": 14, "ayah": 25},
-        {"ar": "وَيَضْرِبُ اللّٰهُ الْأَمْثَالَ لِلنَّاسِ لَعَلَّهُمْ يَتَذَكَّرُونَ", "en": "And Allah presents examples for the people that perhaps they will be reminded.", "ref": "14:25b", "surah": 14, "ayah": 25},
+        {"ar": "تُؤْتِي أُكُلَهَا كُلَّ حِينٍ بِإِذْنِ رَبِّهَا", "en": "Producing its fruit\nevery season\nby permission of its Lord.", "ref": "14:25a", "surah": 14, "ayah": 25},
+        {"ar": "وَيَضْرِبُ اللّٰهُ الْأَمْثَالَ لِلنَّاسِ لَعَلَّهُمْ يَتَذَكَّرُونَ", "en": "And Allah presents examples\nfor the people that perhaps\nthey will be reminded.", "ref": "14:25b", "surah": 14, "ayah": 25},
     ]},
 
     # 33 ─ Al-Qiyamah — La Résurrection
-    {"title": "The Resurrection", "verses": [
-        {"ar": "لَا أُقْسِمُ بِيَوْمِ الْقِيَامَةِ", "en": "I swear by the Day of Resurrection,", "ref": "75:1", "surah": 75, "ayah": 1},
+    {"title": "La Résurrection", "verses": [
+        {"ar": "لَا أُقْسِمُ بِيَوْمِ الْقِيَامَةِ", "en": "I swear by the Day\nof Resurrection,", "ref": "75:1", "surah": 75, "ayah": 1},
         {"ar": "وَلَا أُقْسِمُ بِالنَّفْسِ اللَّوَّامَةِ", "en": "And I swear by theself-reproaching soul.", "ref": "75:2", "surah": 75, "ayah": 2},
-        {"ar": "أَيَحْسَبُ الْإِنسَانُ أَلَّن نَّجْمَعَ عِظَامَهُ", "en": "Does man think that We will not assemble his bones?", "ref": "75:3", "surah": 75, "ayah": 3},
-        {"ar": "بَلَىٰ قَادِرِينَ عَلَىٰ أَن نُّسَوِّيَ بَنَانَهُ", "en": "Yes, We are able to put together even his fingertips.", "ref": "75:4", "surah": 75, "ayah": 4},
+        {"ar": "أَيَحْسَبُ الْإِنسَانُ أَلَّن نَّجْمَعَ عِظَامَهُ", "en": "Does man think that We will not\nassemble his bones?", "ref": "75:3", "surah": 75, "ayah": 3},
+        {"ar": "بَلَىٰ قَادِرِينَ عَلَىٰ أَن نُّسَوِّيَ بَنَانَهُ", "en": "Yes, We are able to put\ntogether even his fingertips.", "ref": "75:4", "surah": 75, "ayah": 4},
     ]},
 
     # 34 ─ Al-Fajr — L'Aurore
-    {"title": "Al-Fajr — The Dawn", "verses": [
+    {"title": "Al-Fajr — L'Aurore", "verses": [
         {"ar": "يَا أَيَّتُهَا النَّفْسُ الْمُطْمَئِنَّةُ", "en": "O reassured soul,", "ref": "89:27", "surah": 89, "ayah": 27},
         {"ar": "ارْجِعِي إِلَىٰ رَبِّكِ رَاضِيَةً مَّرْضِيَّةً", "en": "Return to your Lordwell-pleased and pleasing to Him,", "ref": "89:28", "surah": 89, "ayah": 28},
-        {"ar": "فَادْخُلِي فِي عِبَادِي", "en": "And enter among My servants,", "ref": "89:29", "surah": 89, "ayah": 29},
+        {"ar": "فَادْخُلِي فِي عِبَادِي", "en": "And enter among\nMy servants,", "ref": "89:29", "surah": 89, "ayah": 29},
         {"ar": "وَادْخُلِي جَنَّتِي", "en": "And enter My Paradise.", "ref": "89:30", "surah": 89, "ayah": 30},
     ]},
 
     # 35 ─ Al-Kawthar — L'Abondance
-    {"title": "Al-Kawthar — Abundance", "verses": [
+    {"title": "Al-Kawthar — L'Abondance", "verses": [
         {"ar": "إِنَّا أَعْطَيْنَاكَ الْكَوْثَرَ", "en": "Indeed, We have granted you Al-Kawthar.", "ref": "108:1", "surah": 108, "ayah": 1},
         {"ar": "فَصَلِّ لِرَبِّكَ وَانْحَرْ", "en": "So pray to your Lord and sacrifice.", "ref": "108:2", "surah": 108, "ayah": 2},
         {"ar": "إِنَّ شَانِئَكَ هُوَ الْأَبْتَرُ", "en": "Indeed, your enemy isthe one cut off.", "ref": "108:3", "surah": 108, "ayah": 3},
     ]},
 
     # 36 ─ An-Nasr — Le Secours
-    {"title": "An-Nasr — The Victory", "verses": [
+    {"title": "An-Nasr — Le Secours", "verses": [
         {"ar": "إِذَا جَاءَ نَصْرُ اللّٰهِ وَالْفَتْحُ", "en": "When the victory of Allahhas come and the conquest,", "ref": "110:1", "surah": 110, "ayah": 1},
         {"ar": "وَرَأَيْتَ النَّاسَ يَدْخُلُونَ فِي دِينِ اللّٰهِ أَفْوَاجًا", "en": "And you see the people entering into the religion of Allah in multitudes,", "ref": "110:2", "surah": 110, "ayah": 2},
         {"ar": "فَسَبِّحْ بِحَمْدِ رَبِّكَ وَاسْتَغْفِرْهُ إِنَّهُ كَانَ تَوَّابًا", "en": "Then exalt Him with praise of your Lord and ask forgiveness of Him. Indeed, He is ever Accepting of repentance.", "ref": "110:3", "surah": 110, "ayah": 3},
     ]},
 
     # 37 ─ At-Tin — Le Figuier
-    {"title": "At-Tin — The Fig", "verses": [
+    {"title": "At-Tin — Le Figuier", "verses": [
         {"ar": "لَقَدْ خَلَقْنَا الْإِنسَانَ فِي أَحْسَنِ تَقْوِيمٍ", "en": "We have certainly created manin the best of stature.", "ref": "95:4", "surah": 95, "ayah": 4},
         {"ar": "ثُمَّ رَدَدْنَاهُ أَسْفَلَ سَافِلِينَ", "en": "Then We return himto the lowest of the low,", "ref": "95:5", "surah": 95, "ayah": 5},
         {"ar": "إِلَّا الَّذِينَ آمَنُوا وَعَمِلُوا الصَّالِحَاتِ فَلَهُمْ أَجْرٌ غَيْرُ مَمْنُونٍ", "en": "Except for those who believe and do righteous deeds — for theywill have a reward uninterrupted.", "ref": "95:6", "surah": 95, "ayah": 6},
     ]},
 
     # 38 ─ Al-Layl 5-7 — Les chemins de la facilité
-    {"title": "The Path of Ease", "verses": [
+    {"title": "Le chemin de la facilité", "verses": [
         {"ar": "فَأَمَّا مَنْ أَعْطَىٰ وَاتَّقَىٰ", "en": "As for he who givesand fears Allah", "ref": "92:5", "surah": 92, "ayah": 5},
         {"ar": "وَصَدَّقَ بِالْحُسْنَىٰ", "en": "And believes inthe best [reward],", "ref": "92:6", "surah": 92, "ayah": 6},
         {"ar": "فَسَنُيَسِّرُهُ لِلْيُسْرَىٰ", "en": "We will ease himtoward ease.", "ref": "92:7", "surah": 92, "ayah": 7},
     ]},
 
     # 39 ─ Al-Baqarah 152 — Le souvenir mutuel
-    {"title": "Mutual Remembrance", "verses": [
+    {"title": "Le rappel mutuel", "verses": [
         {"ar": "فَاذْكُرُونِي أَذْكُرْكُمْ", "en": "So remember Me;I will remember you.", "ref": "2:152a", "surah": 2, "ayah": 152},
         {"ar": "وَاشْكُرُوا لِي وَلَا تَكْفُرُونِ", "en": "And be grateful to Meand do not deny Me.", "ref": "2:152b", "surah": 2, "ayah": 152},
     ]},
 
     # 40 ─ At-Tawbah 51 — Ce qu'Allah a écrit
-    {"title": "What Allah Has Decreed", "verses": [
+    {"title": "Ce qu'Allah a décrété", "verses": [
         {"ar": "قُل لَّن يُصِيبَنَا إِلَّا مَا كَتَبَ اللّٰهُ لَنَا", "en": "Say: Nothing will befall usexcept what Allah has decreed for us;", "ref": "9:51a", "surah": 9, "ayah": 51},
         {"ar": "هُوَ مَوْلَانَا وَعَلَى اللّٰهِ فَلْيَتَوَكَّلِ الْمُؤْمِنُونَ", "en": "He is our protector. And upon Allahlet the believers rely.", "ref": "9:51b", "surah": 9, "ayah": 51},
     ]},
 
     # 41 ─ Ar-Ra'd 11 — Allah ne change pas l'état d'un peuple
-    {"title": "Change Comes from Within", "verses": [
+    {"title": "Le changement vient de l'intérieur", "verses": [
         {"ar": "إِنَّ اللّٰهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ", "en": "Indeed, Allah will not change the condition of a people until they change what is in themselves.", "ref": "13:11", "surah": 13, "ayah": 11},
     ]},
 
     # 42 ─ Al-Baqarah 255 (suite) — complète avec Ayat Al-Kursi déjà faite séparée
     # 42 ─ Al-Anfal 2-4 — Les vrais croyants
-    {"title": "The True Believers", "verses": [
+    {"title": "Les vrais croyants", "verses": [
         {"ar": "إِنَّمَا الْمُؤْمِنُونَ الَّذِينَ إِذَا ذُكِرَ اللّٰهُ وَجِلَتْ قُلُوبُهُمْ", "en": "The believers are only those who, when Allah is mentioned, their hearts become fearful,", "ref": "8:2a", "surah": 8, "ayah": 2},
         {"ar": "وَإِذَا تُلِيَتْ عَلَيْهِمْ آيَاتُهُ زَادَتْهُمْ إِيمَانًا", "en": "And when His verses are recited to them, it increases them in faith,", "ref": "8:2b", "surah": 8, "ayah": 2},
         {"ar": "وَعَلَىٰ رَبِّهِمْ يَتَوَكَّلُونَ", "en": "And upon their Lordthey rely.", "ref": "8:2c", "surah": 8, "ayah": 2},
@@ -537,7 +537,7 @@ PASSAGES = [
     ]},
 
     # 43 ─ Al-Hujurat 10-13 — La fraternité et l'honneur
-    {"title": "Brotherhood in Islam", "verses": [
+    {"title": "La fraternité en Islam", "verses": [
         {"ar": "إِنَّمَا الْمُؤْمِنُونَ إِخْوَةٌ", "en": "The believers are but brothers,", "ref": "49:10a", "surah": 49, "ayah": 10},
         {"ar": "فَأَصْلِحُوا بَيْنَ أَخَوَيْكُمْ", "en": "So make peace between your brothers,", "ref": "49:10b", "surah": 49, "ayah": 10},
         {"ar": "وَاتَّقُوا اللّٰهَ لَعَلَّكُمْ تُرْحَمُونَ", "en": "And fear Allah that you may receive mercy.", "ref": "49:10c", "surah": 49, "ayah": 10},
@@ -547,7 +547,7 @@ PASSAGES = [
     ]},
 
     # 44 ─ Yunus 62-64 — Les alliés d'Allah
-    {"title": "The Allies of Allah", "verses": [
+    {"title": "Les alliés d'Allah", "verses": [
         {"ar": "أَلَا إِنَّ أَوْلِيَاءَ اللّٰهِ لَا خَوْفٌ عَلَيْهِمْ وَلَا هُمْ يَحْزَنُونَ", "en": "Unquestionably, the allies of Allah — there will be no fear concerning them, nor will they grieve.", "ref": "10:62", "surah": 10, "ayah": 62},
         {"ar": "الَّذِينَ آمَنُوا وَكَانُوا يَتَّقُونَ", "en": "Those who believed and were fearing Allah.", "ref": "10:63", "surah": 10, "ayah": 63},
         {"ar": "لَهُمُ الْبُشْرَىٰ فِي الْحَيَاةِ الدُّنْيَا وَفِي الْآخِرَةِ", "en": "For them are good tidingsin worldly life and in the Hereafter.", "ref": "10:64a", "surah": 10, "ayah": 64},
@@ -555,7 +555,7 @@ PASSAGES = [
     ]},
 
     # 45 ─ Az-Zumar 23 — Le meilleur des discours
-    {"title": "The Quran — The Best Speech", "verses": [
+    {"title": "Le Coran — La meilleure parole", "verses": [
         {"ar": "اللّٰهُ نَزَّلَ أَحْسَنَ الْحَدِيثِ كِتَابًا مُّتَشَابِهًا مَّثَانِيَ", "en": "Allah has sent down the best statement:a consistent Book wherein is reiteration.", "ref": "39:23a", "surah": 39, "ayah": 23},
         {"ar": "تَقْشَعِرُّ مِنْهُ جُلُودُ الَّذِينَ يَخْشَوْنَ رَبَّهُمْ", "en": "The skins shudder therefrom of those who fear their Lord,", "ref": "39:23b", "surah": 39, "ayah": 23},
         {"ar": "ثُمَّ تَلِينُ جُلُودُهُمْ وَقُلُوبُهُمْ إِلَىٰ ذِكْرِ اللّٰهِ", "en": "Then their skins and hearts softento the remembrance of Allah.", "ref": "39:23c", "surah": 39, "ayah": 23},
@@ -563,7 +563,7 @@ PASSAGES = [
     ]},
 
     # 46 ─ Al-Isra 23-24 — Les parents
-    {"title": "Honoring Parents", "verses": [
+    {"title": "Honorer ses parents", "verses": [
         {"ar": "وَقَضَىٰ رَبُّكَ أَلَّا تَعْبُدُوا إِلَّا إِيَّاهُ", "en": "And your Lord has decreed that younot worship except Him,", "ref": "17:23a", "surah": 17, "ayah": 23},
         {"ar": "وَبِالْوَالِدَيْنِ إِحْسَانًا", "en": "And to parents, good treatment.", "ref": "17:23b", "surah": 17, "ayah": 23},
         {"ar": "إِمَّا يَبْلُغَنَّ عِندَكَ الْكِبَرَ أَحَدُهُمَا أَوْ كِلَاهُمَا", "en": "Whether one or both of them reach oldage with you,", "ref": "17:23c", "surah": 17, "ayah": 23},
@@ -574,7 +574,7 @@ PASSAGES = [
     ]},
 
     # 47 ─ Al-Muzzammil 20 — La prière de nuit
-    {"title": "The Night Prayer — Tahajjud", "verses": [
+    {"title": "La prière de nuit — Tahajjud", "verses": [
         {"ar": "إِنَّ رَبَّكَ يَعْلَمُ أَنَّكَ تَقُومُ أَدْنَىٰ مِن ثُلُثَيِ اللَّيْلِ", "en": "Indeed, your Lord knows that you stand praying almost two thirds of the night,", "ref": "73:20a", "surah": 73, "ayah": 20},
         {"ar": "وَنِصْفَهُ وَثُلُثَهُ وَطَائِفَةٌ مِّنَ الَّذِينَ مَعَكَ", "en": "And half of it and a third of it, and a group of those with you.", "ref": "73:20b", "surah": 73, "ayah": 20},
         {"ar": "وَأَقِيمُوا الصَّلَاةَ وَآتُوا الزَّكَاةَ", "en": "And establish prayer and give Zakah,", "ref": "73:20c", "surah": 73, "ayah": 20},
@@ -583,7 +583,7 @@ PASSAGES = [
     ]},
 
     # 48 ─ Al-Baqarah 2-5 — Le Livre sans doute
-    {"title": "The Guide for the Righteous", "verses": [
+    {"title": "Le guide des pieux", "verses": [
         {"ar": "ذَٰلِكَ الْكِتَابُ لَا رَيْبَ فِيهِ", "en": "This is the Book about which there is no doubt,", "ref": "2:2a", "surah": 2, "ayah": 2},
         {"ar": "هُدًى لِّلْمُتَّقِينَ", "en": "A guidance for those conscious of Allah.", "ref": "2:2b", "surah": 2, "ayah": 2},
         {"ar": "الَّذِينَ يُؤْمِنُونَ بِالْغَيْبِ وَيُقِيمُونَ الصَّلَاةَ", "en": "Who believe in the unseen, establish prayer,", "ref": "2:3a", "surah": 2, "ayah": 3},
@@ -593,14 +593,14 @@ PASSAGES = [
     ]},
 
     # 49 ─ Fussilat 33 — La meilleure parole
-    {"title": "Calling to Allah", "verses": [
+    {"title": "Appeler vers Allah", "verses": [
         {"ar": "وَمَنْ أَحْسَنُ قَوْلًا مِّمَّن دَعَا إِلَى اللّٰهِ", "en": "And who is better in speech than one who calls to Allah,", "ref": "41:33a", "surah": 41, "ayah": 33},
         {"ar": "وَعَمِلَ صَالِحًا", "en": "And does righteousness,", "ref": "41:33b", "surah": 41, "ayah": 33},
         {"ar": "وَقَالَ إِنَّنِي مِنَ الْمُسْلِمِينَ", "en": "And says: Indeed, I amof the Muslims?", "ref": "41:33c", "surah":41, "ayah": 33},
     ]},
 
     # 50 ─ Al-Imran 185 — Chaque âme goûtera la mort
-    {"title": "The Test of This World", "verses": [
+    {"title": "L'épreuve de ce bas monde", "verses": [
         {"ar": "كُلُّ نَفْسٍ ذَائِقَةُ الْمَوْتِ", "en": "Every soul will taste death.", "ref": "3:185a", "surah": 3, "ayah": 185},
         {"ar": "وَإِنَّمَا تُوَفَّوْنَ أُجُورَكُمْ يَوْمَ الْقِيَامَةِ", "en": "And you will only be given your full compensation on the Day of Resurrection.", "ref": "3:185b", "surah": 3, "ayah": 185},
         {"ar": "فَمَن زُحْزِحَ عَنِ النَّارِ وَأُدْخِلَ الْجَنَّةَ فَقَدْ فَازَ", "en": "So whoever is kept away from the Fire and admitted to Paradise has attained his desire.", "ref": "3:185c", "surah": 3, "ayah": 185},
@@ -608,14 +608,14 @@ PASSAGES = [
     ]},
 
     # 51 ─ Al-Kahf 46 — Les richesses passagères
-    {"title": "True Wealth", "verses": [
+    {"title": "La vraie richesse", "verses": [
         {"ar": "الْمَالُ وَالْبَنُونَ زِينَةُ الْحَيَاةِ الدُّنْيَا", "en": "Wealth and children arethe adornment of worldly life.", "ref": "18:46a", "surah": 18, "ayah": 46},
         {"ar": "وَالْبَاقِيَاتُ الصَّالِحَاتُ خَيْرٌ عِندَ رَبِّكَ ثَوَابًا", "en": "But the enduring good deeds are betterto your Lord for reward,", "ref": "18:46b", "surah": 18, "ayah": 46},
         {"ar": "وَخَيْرٌ أَمَلًا", "en": "And better for one's hope.", "ref": "18:46c", "surah": 18, "ayah": 46},
     ]},
 
     # 52 ─ Al-Imran 26-27 — La souveraineté d'Allah
-    {"title": "Allah Gives and Takes", "verses": [
+    {"title": "Allah donne et reprend", "verses": [
         {"ar": "قُلِ اللّٰهُمَّ مَالِكَ الْمُلْكِ", "en": "Say: O Allah, Owner of Sovereignty,", "ref": "3:26a", "surah": 3, "ayah": 26},
         {"ar": "تُؤْتِي الْمُلْكَ مَن تَشَاءُ وَتَنزِعُ الْمُلْكَ مِمَّن تَشَاءُ", "en": "You give sovereignty to whom You will and You take sovereignty from whom You will.", "ref": "3:26b", "surah": 3, "ayah": 26},
         {"ar": "وَتُعِزُّ مَن تَشَاءُ وَتُذِلُّ مَن تَشَاءُ", "en": "You honor whom You will and You humble whom You will.", "ref": "3:26c", "surah": 3, "ayah": 26},
@@ -623,7 +623,7 @@ PASSAGES = [
     ]},
 
     # 53 ─ Al-Mu'minun 1-11 — Les croyants qui réussissent
-    {"title": "The Successful Believers", "verses": [
+    {"title": "Les croyants qui réussissent", "verses": [
         {"ar": "قَدْ أَفْلَحَ الْمُؤْمِنُونَ", "en": "Certainly will the believers have succeeded:", "ref": "23:1", "surah": 23, "ayah": 1},
         {"ar": "الَّذِينَ هُمْ فِي صَلَاتِهِمْ خَاشِعُونَ", "en": "They who are during their prayer humbly submissive,", "ref": "23:2", "surah": 23, "ayah": 2},
         {"ar": "وَالَّذِينَ هُمْ عَنِ اللَّغْوِ مُعْرِضُونَ", "en": "And they who turn awayfrom ill speech,", "ref": "23:3", "surah": 23, "ayah": 3},
@@ -633,20 +633,20 @@ PASSAGES = [
     ]},
 
     # 54 ─ Al-Baqarah 163 — L'Unique
-    {"title": "Allah — The One", "verses": [
+    {"title": "Allah — L'Unique", "verses": [
         {"ar": "وَإِلَٰهُكُمْ إِلَٰهٌ وَاحِدٌ", "en": "And your God is one God.", "ref": "2:163a", "surah": 2, "ayah": 163},
         {"ar": "لَّا إِلَٰهَ إِلَّا هُوَ الرَّحْمَٰنُ الرَّحِيمُ", "en": "There is no deity worthy of worship except Him, the Most Gracious, the Most Merciful.", "ref": "2:163b", "surah": 2, "ayah": 163},
     ]},
 
     # 55 ─ An-Nahl 97 — La bonne vie
-    {"title": "The Good Life", "verses": [
+    {"title": "La belle vie", "verses": [
         {"ar": "مَنْ عَمِلَ صَالِحًا مِّن ذَكَرٍ أَوْ أُنثَىٰ وَهُوَ مُؤْمِنٌ", "en": "Whoever does righteousness, whether male or female, while being a believer —", "ref": "16:97a", "surah": 16, "ayah": 97},
         {"ar": "فَلَنُحْيِيَنَّهُ حَيَاةً طَيِّبَةً", "en": "We will surely cause himto live a good life.", "ref": "16:97b", "surah": 16, "ayah": 97},
         {"ar": "وَلَنَجْزِيَنَّهُمْ أَجْرَهُم بِأَحْسَنِ مَا كَانُوا يَعْمَلُونَ", "en": "And We will surely give themtheir reward according to the bestof what they used to do.", "ref": "16:97c", "surah": 16, "ayah": 97},
     ]},
 
     # 56 ─ Al-Ahzab 41-43 — Abondance de dhikr
-    {"title": "Abundance of Remembrance", "verses": [
+    {"title": "L'abondance du rappel", "verses": [
         {"ar": "يَا أَيُّهَا الَّذِينَ آمَنُوا اذْكُرُوا اللّٰهَ ذِكْرًا كَثِيرًا", "en": "O you who have believed, remember Allah with much remembrance,", "ref": "33:41", "surah": 33, "ayah": 41},
         {"ar": "وَسَبِّحُوهُ بُكْرَةً وَأَصِيلًا", "en": "And exalt Him morning and afternoon.", "ref": "33:42", "surah": 33, "ayah": 42},
         {"ar": "هُوَ الَّذِي يُصَلِّي عَلَيْكُمْ وَمَلَائِكَتُهُ", "en": "It is He who confers blessing upon you, and His angels,", "ref": "33:43a", "surah": 33, "ayah": 43},
@@ -655,7 +655,7 @@ PASSAGES = [
     ]},
 
     # 57 ─ Ibrahim 40-41 — Dua d'Ibrahim
-    {"title": "The Prayer of Ibrahim", "verses": [
+    {"title": "L'invocation d'Ibrahim", "verses": [
         {"ar": "رَبِّ اجْعَلْنِي مُقِيمَ الصَّلَاةِ وَمِن ذُرِّيَّتِي", "en": "My Lord, make me an establisher of prayer, and my descendants.", "ref": "14:40a", "surah": 14, "ayah": 40},
         {"ar": "رَبَّنَا وَتَقَبَّلْ دُعَاءِ", "en": "Our Lord, and accept my supplication.", "ref": "14:40b", "surah": 14, "ayah": 40},
         {"ar": "رَبَّنَا اغْفِرْ لِي وَلِوَالِدَيَّ وَلِلْمُؤْمِنِينَ", "en": "Our Lord, forgive meand my parents and the believers.", "ref": "14:41a", "surah": 14, "ayah": 41},
@@ -663,7 +663,7 @@ PASSAGES = [
     ]},
 
     # 58 ─ Al-Ghashiyah — La Déferlante
-    {"title": "Al-Ghashiyah — The Overwhelming", "verses": [
+    {"title": "Al-Ghashiyah — L'Enveloppante", "verses": [
         {"ar": "وُجُوهٌ يَوْمَئِذٍ خَاشِعَةٌ", "en": "Faces, that Day, will be humbled,", "ref": "88:2", "surah": 88, "ayah": 2},
         {"ar": "وُجُوهٌ يَوْمَئِذٍ نَّاعِمَةٌ", "en": "And faces, that Day, will be in delight,", "ref": "88:8", "surah": 88, "ayah": 8},
         {"ar": "لِّسَعْيِهَا رَاضِيَةٌ", "en": "Satisfied with their effort,", "ref": "88:9", "surah": 88, "ayah": 9},
@@ -675,18 +675,18 @@ PASSAGES = [
     ]},
 
     # 59 ─ Al-Qasas 24 — Dua de Musa
-    {"title": "The Dua of Musa", "verses": [
+    {"title": "L'invocation de Moussa", "verses": [
         {"ar": "رَبِّ إِنِّي لِمَا أَنزَلْتَ إِلَيَّ مِنْ خَيْرٍ فَقِيرٌ", "en": "My Lord, indeed I amfor whatever good You would send downto me, in need.", "ref": "28:24", "surah": 28, "ayah": 24},
     ]},
 
     # 60 ─ Sad 35 — Dua de Sulayman
-    {"title": "The Dua of Sulayman", "verses": [
+    {"title": "L'invocation de Souleymane", "verses": [
         {"ar": "رَبِّ اغْفِرْ لِي وَهَبْ لِي مُلْكًا لَّا يَنبَغِي لِأَحَدٍ مِّن بَعْدِي", "en": "My Lord, forgive me and grant mea kingdom such as will not belongto anyone after me.", "ref": "38:35a", "surah": 38, "ayah": 35},
         {"ar": "إِنَّكَ أَنتَ الْوَهَّابُ", "en": "Indeed, You are the Bestower.", "ref": "38:35b", "surah": 38, "ayah": 35},
     ]},
 
     # 61 ─ Al-Anbiya 83-84 — Dua d'Ayyoub
-    {"title": "The Dua of Ayyoub — Patience in Trial", "verses": [
+    {"title": "L'invocation d'Ayyoub — La patience dans l'épreuve", "verses": [
         {"ar": "وَأَيُّوبَ إِذْ نَادَىٰ رَبَّهُ أَنِّي مَسَّنِيَ الضُّرُّ", "en": "And remember Job, when he calledto his Lord: Indeed, adversity has touched me,", "ref": "21:83a", "surah": 21, "ayah": 83},
         {"ar": "وَأَنتَ أَرْحَمُ الرَّاحِمِينَ", "en": "And you are the most Merciful of the merciful.", "ref": "21:83b", "surah": 21, "ayah": 83},
         {"ar": "فَاسْتَجَبْنَا لَهُ فَكَشَفْنَا مَا بِهِ مِن ضُرٍّ", "en": "So We responded to himand removed what afflicted him of adversity.", "ref": "21:84a", "surah": 21, "ayah": 84},
@@ -694,7 +694,7 @@ PASSAGES = [
     ]},
 
     # 62 ─ Al-Anbiya 87 — Dua de Yunus (Dhul-Nun)
-    {"title": "The Dua of Yunus — From the Darkness", "verses": [
+    {"title": "L'invocation de Younous — Depuis les ténèbres", "verses": [
         {"ar": "وَذَا النُّونِ إِذ ذَّهَبَ مُغَاضِبًا", "en": "And remember the man of the fish, when he went away in anger,", "ref": "21:87a", "surah": 21, "ayah": 87},
         {"ar": "فَنَادَىٰ فِي الظُّلُمَاتِ أَن لَّا إِلَٰهَ إِلَّا أَنتَ سُبْحَانَكَ", "en": "And called out in the darkness:There is no deity except You;exalted are You.", "ref": "21:87b", "surah": 21, "ayah": 87},
         {"ar": "إِنِّي كُنتُ مِنَ الظَّالِمِينَ", "en": "Indeed, I have been of the wrongdoers.", "ref": "21:87c", "surah": 21, "ayah": 87},
@@ -703,14 +703,14 @@ PASSAGES = [
     ]},
 
     # 63 ─ Al-Baqarah 201 — La meilleure dua
-    {"title": "The Best Supplication", "verses": [
+    {"title": "La meilleure invocation", "verses": [
         {"ar": "رَبَّنَا آتِنَا فِي الدُّنْيَا حَسَنَةً", "en": "Our Lord, give us in this worldthat which is good,", "ref": "2:201a", "surah": 2, "ayah": 201},
         {"ar": "وَفِي الْآخِرَةِ حَسَنَةً", "en": "And in the Hereafter that which is good,", "ref": "2:201b", "surah": 2, "ayah": 201},
         {"ar": "وَقِنَا عَذَابَ النَّارِ", "en": "And protect us fromthe punishment of the Fire.", "ref": "2:201c", "surah": 2, "ayah": 201},
     ]},
 
     # 64 ─ Al-Furqan 63-76 — Les serviteurs du Tout-Miséricordieux
-    {"title": "The Servants of the Most Merciful", "verses": [
+    {"title": "Les serviteurs du Tout Miséricordieux", "verses": [
         {"ar": "وَعِبَادُ الرَّحْمَٰنِ الَّذِينَ يَمْشُونَ عَلَى الْأَرْضِ هَوْنًا", "en": "And the servants of the Most Merciful are those who walk upon the earth easily,", "ref": "25:63a", "surah": 25, "ayah": 63},
         {"ar": "وَإِذَا خَاطَبَهُمُ الْجَاهِلُونَ قَالُوا سَلَامًا", "en": "And when the ignorant address them harshly, they say words of peace.", "ref": "25:63b", "surah": 25, "ayah": 63},
         {"ar": "وَالَّذِينَ يَبِيتُونَ لِرَبِّهِمْ سُجَّدًا وَقِيَامًا", "en": "And those who spend the nightfor their Lord prostrating and standing in prayer.", "ref": "25:64", "surah": 25, "ayah": 64},
@@ -719,7 +719,7 @@ PASSAGES = [
     ]},
 
     # 65 ─ Al-Anfal 45-46 — Steadfastness
-    {"title": "Steadfastness in Struggle", "verses": [
+    {"title": "La fermeté dans l'épreuve", "verses": [
         {"ar": "يَا أَيُّهَا الَّذِينَ آمَنُوا إِذَا لَقِيتُمْ فِئَةً فَاثْبُتُوا", "en": "O you who have believed, when you encounter a company, stand firm.", "ref": "8:45a", "surah": 8, "ayah": 45},
         {"ar": "وَاذْكُرُوا اللّٰهَ كَثِيرًا لَّعَلَّكُمْ تُفْلِحُونَ", "en": "And remember Allah muchthat you may be successful.", "ref": "8:45b", "surah": 8, "ayah": 45},
         {"ar": "وَأَطِيعُوا اللّٰهَ وَرَسُولَهُ وَلَا تَنَازَعُوا فَتَفْشَلُوا", "en": "And obey Allah and His messenger and do not dispute, lest you fail.", "ref": "8:46a", "surah": 8, "ayah": 46},
@@ -727,14 +727,14 @@ PASSAGES = [
     ]},
 
     # 66 ─ Al-Maidah 35 — Se rapprocher d'Allah
-    {"title": "Drawing Closer to Allah", "verses": [
+    {"title": "Se rapprocher d'Allah", "verses": [
         {"ar": "يَا أَيُّهَا الَّذِينَ آمَنُوا اتَّقُوا اللّٰهَ", "en": "O you who have believed, fear Allah,", "ref": "5:35a", "surah": 5, "ayah": 35},
         {"ar": "وَابْتَغُوا إِلَيْهِ الْوَسِيلَةَ", "en": "And seek the meansof nearness to Him,", "ref": "5:35b", "surah": 5, "ayah": 35},
         {"ar": "وَجَاهِدُوا فِي سَبِيلِهِ لَعَلَّكُمْ تُفْلِحُونَ", "en": "And strive in His causethat you may succeed.", "ref": "5:35c", "surah": 5, "ayah": 35},
     ]},
 
     # 67 ─ Al-Jumu'ah 9-10 — La prière du vendredi
-    {"title": "The Friday Prayer", "verses": [
+    {"title": "La prière du vendredi", "verses": [
         {"ar": "يَا أَيُّهَا الَّذِينَ آمَنُوا إِذَا نُودِيَ لِلصَّلَاةِ مِن يَوْمِ الْجُمُعَةِ", "en": "O you who have believed, when the call to prayer is madeon Friday,", "ref": "62:9a", "surah": 62, "ayah": 9},
         {"ar": "فَاسْعَوْا إِلَىٰ ذِكْرِ اللّٰهِ وَذَرُوا الْبَيْعَ", "en": "Then proceed to the remembrance of Allahand leave trade.", "ref": "62:9b", "surah": 62, "ayah": 9},
         {"ar": "ذَٰلِكُمْ خَيْرٌ لَّكُمْ إِن كُنتُمْ تَعْلَمُونَ", "en": "That is better for you, if you only knew.", "ref": "62:9c", "surah": 62, "ayah": 9},
@@ -744,7 +744,7 @@ PASSAGES = [
     ]},
 
     # 68 ─ An-Nisa 36 — Bienfaisance envers tous
-    {"title": "Total Goodness", "verses": [
+    {"title": "Le bien absolu", "verses": [
         {"ar": "وَاعْبُدُوا اللّٰهَ وَلَا تُشْرِكُوا بِهِ شَيْئًا", "en": "Worship Allah and associate nothing with Him,", "ref": "4:36a", "surah": 4, "ayah": 36},
         {"ar": "وَبِالْوَالِدَيْنِ إِحْسَانًا", "en": "And to parents do good,", "ref": "4:36b", "surah": 4, "ayah": 36},
         {"ar": "وَبِذِي الْقُرْبَىٰ وَالْيَتَامَىٰ وَالْمَسَاكِينِ", "en": "And to relatives, orphans, the needy,", "ref": "4:36c", "surah": 4, "ayah": 36},
@@ -752,7 +752,7 @@ PASSAGES = [
     ]},
 
     # 69 ─ Al-Imran 133-136 — Se hâter vers le pardon
-    {"title": "Hastening to Allah's Forgiveness", "verses": [
+    {"title": "Se hâter vers le pardon d'Allah", "verses": [
         {"ar": "وَسَارِعُوا إِلَىٰ مَغْفِرَةٍ مِّن رَّبِّكُمْ", "en": "And hasten to forgiveness from your Lord,", "ref": "3:133a", "surah": 3, "ayah": 133},
         {"ar": "وَجَنَّةٍ عَرْضُهَا السَّمَاوَاتُ وَالْأَرْضُ", "en": "And a garden whose width spansthe heavens and earth,", "ref": "3:133b", "surah": 3, "ayah": 133},
         {"ar": "أُعِدَّتْ لِلْمُتَّقِينَ", "en": "Prepared for the righteous.", "ref": "3:133c", "surah": 3, "ayah": 133},
@@ -762,7 +762,7 @@ PASSAGES = [
     ]},
 
     # 70 ─ Al-Baqarah 177 — La vraie piété (Al-Birr)
-    {"title": "True Righteousness — Al-Birr", "verses": [
+    {"title": "La vraie piété — Al-Birr", "verses": [
         {"ar": "لَّيْسَ الْبِرَّ أَن تُوَلُّوا وُجُوهَكُمْ قِبَلَ الْمَشْرِقِ وَالْمَغْرِبِ", "en": "Righteousness is not turning your faces toward the east or west.", "ref": "2:177a", "surah": 2, "ayah": 177},
         {"ar": "وَلَٰكِنَّ الْبِرَّ مَنْ آمَنَ بِاللّٰهِ وَالْيَوْمِ الْآخِرِ", "en": "But righteousness is one who believes in Allah, the Last Day,", "ref": "2:177b", "surah": 2, "ayah": 177},
         {"ar": "وَآتَى الْمَالَ عَلَىٰ حُبِّهِ ذَوِي الْقُرْبَىٰ وَالْيَتَامَىٰ وَالْمَسَاكِينَ", "en": "And gives wealth, in spite of love for it, to relatives, orphans, the needy,", "ref": "2:177c", "surah": 2, "ayah": 177},
@@ -771,21 +771,21 @@ PASSAGES = [
     ]},
 
     # 71 — Paradise
-    {"title": "Paradise — Jannah", "verses": [
+    {"title": "Le Paradis — Jannah", "verses": [
         {"ar": "وَبَشِّرِ الَّذِينَ آمَنُوا وَعَمِلُوا الصَّالِحَاتِ أَنَّ لَهُمْ جَنَّاتٍ تَجْرِي مِن تَحْتِهَا الْأَنْهَارُ", "en": "Give good tidings to those who believe\nand do righteous deeds that they will have\ngardens beneath which rivers flow.", "ref": "2:25a", "surah": 2, "ayah": 25},
         {"ar": "كُلَّمَا رُزِقُوا مِنْهَا مِن ثَمَرَةٍ رِّزْقًا قَالُوا هَٰذَا الَّذِي رُزِقْنَا مِن قَبْلُ", "en": "Whenever they are provided with fruit\ntherefrom as provision, they will say:\nthis is what we were provided before.", "ref": "2:25b", "surah": 2, "ayah": 25},
         {"ar": "وَلَهُمْ فِيهَا أَزْوَاجٌ مُّطَهَّرَةٌ وَهُمْ فِيهَا خَالِدُونَ", "en": "And they will have therein\npurified spouses, \nand they will abide therein eternally.", "ref": "2:25c", "surah": 2, "ayah": 25},
     ]},
 
     # 72 — The Day of Judgment
-    {"title": "The Day of Judgment", "verses": [
+    {"title": "Le Jour du Jugement", "verses": [
         {"ar": "يَوْمَ تَجِدُ كُلُّ نَفْسٍ مَّا عَمِلَتْ مِنْ خَيْرٍ مُّحْضَرًا", "en": "The Day every soul will find\nwhat it has done of good\npresented before it,", "ref": "3:30a", "surah": 3, "ayah": 30},
         {"ar": "وَمَا عَمِلَتْ مِن سُوءٍ تَوَدُّ لَوْ أَنَّ بَيْنَهَا وَبَيْنَهُ أَمَدًا بَعِيدًا", "en": "And what it has done of evil, \nit will wish that between itself and that\nwere a great distance.", "ref": "3:30b", "surah": 3, "ayah": 30},
         {"ar": "وَيُحَذِّرُكُمُ اللّٰهُ نَفْسَهُ", "en": "And Allah warns you\nof Himself.", "ref": "3:30c", "surah": 3, "ayah": 30},
     ]},
 
     # 73 — The Signs of Allah
-    {"title": "The Signs of Allah", "verses": [
+    {"title": "Les signes d'Allah", "verses": [
         {"ar": "إِنَّ فِي خَلْقِ السَّمَاوَاتِ وَالْأَرْضِ وَاخْتِلَافِ اللَّيْلِ وَالنَّهَارِ لَآيَاتٍ لِّأُولِي الْأَلْبَابِ", "en": "Indeed, in the creation of the heavens\nand the earth and the alternation\nof night and day are signs for people of understanding.", "ref": "3:190", "surah": 3, "ayah": 190},
         {"ar": "الَّذِينَ يَذْكُرُونَ اللّٰهَ قِيَامًا وَقُعُودًا وَعَلَىٰ جُنُوبِهِمْ", "en": "Those who remember Allah\nwhile standing, sitting, \nand lying on their sides,", "ref": "3:191a", "surah": 3, "ayah": 191},
         {"ar": "وَيَتَفَكَّرُونَ فِي خَلْقِ السَّمَاوَاتِ وَالْأَرْضِ", "en": "And who reflect upon\nthe creation of the heavens\nand the earth,", "ref": "3:191b", "surah": 3, "ayah": 191},
@@ -793,57 +793,57 @@ PASSAGES = [
     ]},
 
     # 74 — Repentance
-    {"title": "Repentance — Tawbah", "verses": [
+    {"title": "Le repentir — Tawbah", "verses": [
         {"ar": "وَتُوبُوا إِلَى اللّٰهِ جَمِيعًا أَيُّهَ الْمُؤْمِنُونَ لَعَلَّكُمْ تُفْلِحُونَ", "en": "And turn to Allah in repentance, \nall of you, O believers, \nthat you might succeed.", "ref": "24:31b", "surah": 24, "ayah": 31},
     ]},
 
     # 75 — The Quran as Healing
-    {"title": "The Quran as Healing", "verses": [
+    {"title": "Le Coran, une guérison", "verses": [
         {"ar": "وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ", "en": "And We send down of the Quran\nthat which is healing and mercy\nfor the believers.", "ref": "17:82a", "surah": 17, "ayah": 82},
         {"ar": "وَلَا يَزِيدُ الظَّالِمِينَ إِلَّا خَسَارًا", "en": "And it does not increase the wrongdoers\nexcept in loss.", "ref": "17:82b", "surah": 17, "ayah": 82},
     ]},
 
     # 76 — Allah's Knowledge
-    {"title": "Allah's All-Encompassing Knowledge", "verses": [
+    {"title": "La science infinie d'Allah", "verses": [
         {"ar": "وَعِندَهُ مَفَاتِحُ الْغَيْبِ لَا يَعْلَمُهَا إِلَّا هُوَ", "en": "And with Him are the keys\nof the unseen; none knows them\nexcept Him.", "ref": "6:59a", "surah": 6, "ayah": 59},
         {"ar": "وَيَعْلَمُ مَا فِي الْبَرِّ وَالْبَحْرِ", "en": "And He knows what is\non the land and in the sea.", "ref": "6:59b", "surah": 6, "ayah": 59},
         {"ar": "وَمَا تَسْقُطُ مِن وَرَقَةٍ إِلَّا يَعْلَمُهَا", "en": "Not a leaf falls\nbut that He knows it.", "ref": "6:59c", "surah": 6, "ayah": 59},
     ]},
 
     # 77 — Seeking Refuge in Allah
-    {"title": "Seeking Refuge in Allah", "verses": [
+    {"title": "Se réfugier auprès d'Allah", "verses": [
         {"ar": "وَإِمَّا يَنزَغَنَّكَ مِنَ الشَّيْطَانِ نَزْغٌ فَاسْتَعِذْ بِاللّٰهِ", "en": "And if an evil suggestion\ncomes to you from Satan, \nthen seek refuge in Allah.", "ref": "7:200a", "surah": 7, "ayah": 200},
         {"ar": "إِنَّهُ سَمِيعٌ عَلِيمٌ", "en": "Indeed, He is\nHearing and Knowing.", "ref": "7:200b", "surah": 7, "ayah": 200},
     ]},
 
     # 78 — Dhikr Morning and Evening
-    {"title": "Morning and Evening Remembrance", "verses": [
+    {"title": "Le rappel du matin et du soir", "verses": [
         {"ar": "وَاذْكُر رَّبَّكَ فِي نَفْسِكَ تَضَرُّعًا وَخِيفَةً", "en": "And remember your Lord within yourself\nin humility and in fear,", "ref": "7:205a", "surah": 7, "ayah": 205},
         {"ar": "وَدُونَ الْجَهْرِ مِنَ الْقَوْلِ بِالْغُدُوِّ وَالْآصَالِ", "en": "Without loudness in words, \nin the mornings and evenings.", "ref": "7:205b", "surah": 7, "ayah": 205},
         {"ar": "وَلَا تَكُن مِّنَ الْغَافِلِينَ", "en": "And do not be\namong the heedless.", "ref": "7:205c", "surah": 7, "ayah": 205},
     ]},
 
     # 79 — The Best of Deeds
-    {"title": "The Best of Deeds", "verses": [
+    {"title": "La meilleure des actions", "verses": [
         {"ar": "قُلْ إِن كُنتُمْ تُحِبُّونَ اللّٰهَ فَاتَّبِعُونِي يُحْبِبْكُمُ اللّٰهُ", "en": "Say: If you love Allah, \nthen follow me — Allah will love you.", "ref": "3:31a", "surah": 3, "ayah": 31},
         {"ar": "وَيَغْفِرْ لَكُمْ ذُنُوبَكُمْ وَاللّٰهُ غَفُورٌ رَّحِيمٌ", "en": "And He will forgive your sins.\nAnd Allah is Forgiving\nand Merciful.", "ref": "3:31b", "surah": 3, "ayah": 31},
     ]},
 
     # 80 — The Hellfire Warning
-    {"title": "Warning Against the Hellfire", "verses": [
+    {"title": "La mise en garde contre l'Enfer", "verses": [
         {"ar": "وَاتَّقُوا النَّارَ الَّتِي أُعِدَّتْ لِلْكَافِرِينَ", "en": "And fear the Fire\nprepared for the disbelievers.", "ref": "3:131", "surah": 3, "ayah": 131},
         {"ar": "وَأَطِيعُوا اللّٰهَ وَالرَّسُولَ لَعَلَّكُمْ تُرْحَمُونَ", "en": "And obey Allah and the Messenger\nthat you may obtain mercy.", "ref": "3:132", "surah": 3, "ayah": 132},
     ]},
 
     # 81 — Sincerity in Worship
-    {"title": "Sincerity in Worship", "verses": [
+    {"title": "La sincérité dans l'adoration", "verses": [
         {"ar": "وَمَا أُمِرُوا إِلَّا لِيَعْبُدُوا اللّٰهَ مُخْلِصِينَ لَهُ الدِّينَ", "en": "And they were not commanded\nexcept to worship Allah, \nbeing sincere to Him in religion,", "ref": "98:5a", "surah": 98, "ayah": 5},
         {"ar": "حُنَفَاءَ وَيُقِيمُوا الصَّلَاةَ وَيُؤْتُوا الزَّكَاةَ", "en": "Inclining to truth, \nand to establish prayer\nand to give Zakah.", "ref": "98:5b", "surah": 98, "ayah": 5},
         {"ar": "وَذَٰلِكَ دِينُ الْقَيِّمَةِ", "en": "And that is\nthe correct religion.", "ref": "98:5c", "surah": 98, "ayah": 5},
     ]},
 
     # 82 — Al-Baqarah: Fasting
-    {"title": "Fasting — Ramadan", "verses": [
+    {"title": "Le jeûne — Ramadan", "verses": [
         {"ar": "يَا أَيُّهَا الَّذِينَ آمَنُوا كُتِبَ عَلَيْكُمُ الصِّيَامُ", "en": "O you who have believed, \ndecreed upon you is fasting,", "ref": "2:183a", "surah": 2, "ayah": 183},
         {"ar": "كَمَا كُتِبَ عَلَى الَّذِينَ مِن قَبْلِكُمْ لَعَلَّكُمْ تَتَّقُونَ", "en": "As it was decreed upon\nthose before you, \nthat you may become righteous.", "ref": "2:183b", "surah": 2, "ayah": 183},
         {"ar": "شَهْرُ رَمَضَانَ الَّذِي أُنزِلَ فِيهِ الْقُرْآنُ", "en": "The month of Ramadan\nin which was revealed the Quran,", "ref": "2:185a", "surah": 2, "ayah": 185},
@@ -851,20 +851,20 @@ PASSAGES = [
     ]},
 
     # 83 — Charity
-    {"title": "Charity and Giving", "verses": [
+    {"title": "L'aumône et le don", "verses": [
         {"ar": "مَّثَلُ الَّذِينَ يُنفِقُونَ أَمْوَالَهُمْ فِي سَبِيلِ اللّٰهِ كَمَثَلِ حَبَّةٍ أَنبَتَتْ سَبْعَ سَنَابِلَ", "en": "The example of those who spend\ntheir wealth in the way of Allah\nis like a grain that sprouts seven ears,", "ref": "2:261a", "surah": 2, "ayah": 261},
         {"ar": "فِي كُلِّ سُنبُلَةٍ مِّائَةُ حَبَّةٍ", "en": "In each ear\none hundred grains.", "ref": "2:261b", "surah": 2, "ayah": 261},
         {"ar": "وَاللّٰهُ يُضَاعِفُ لِمَن يَشَاءُ وَاللّٰهُ وَاسِعٌ عَلِيمٌ", "en": "And Allah multiplies\nfor whom He wills.\nAllah is All-Encompassing and Knowing.", "ref": "2:261c", "surah": 2, "ayah": 261},
     ]},
 
     # 84 — The Hereafter
-    {"title": "The Hereafter — Al-Akhirah", "verses": [
+    {"title": "L'au-delà — Al-Akhira", "verses": [
         {"ar": "وَمَا الْحَيَاةُ الدُّنْيَا إِلَّا لَعِبٌ وَلَهْوٌ", "en": "And the worldly life\nis not but amusement and diversion.", "ref": "47:36a", "surah": 47, "ayah": 36},
         {"ar": "وَإِن تُؤْمِنُوا وَتَتَّقُوا يُؤْتِكُمْ أُجُورَكُمْ", "en": "But if you believe and fear Allah, \nHe will give you your rewards.", "ref": "47:36b", "surah": 47, "ayah": 36},
     ]},
 
     # 85 — Surah Yasin opening
-    {"title": "Ya-Sin — Heart of the Quran", "verses": [
+    {"title": "Ya-Sin — Le cœur du Coran", "verses": [
         {"ar": "يس", "en": "Ya-Sin.", "ref": "36:1", "surah": 36, "ayah": 1},
         {"ar": "وَالْقُرْآنِ الْحَكِيمِ", "en": "By the wise Quran.", "ref": "36:2", "surah": 36, "ayah": 2},
         {"ar": "إِنَّكَ لَمِنَ الْمُرْسَلِينَ", "en": "Indeed you are\nof the messengers,", "ref": "36:3", "surah": 36, "ayah": 3},
@@ -872,7 +872,7 @@ PASSAGES = [
     ]},
 
     # 86 — The Believers' Supplication
-    {"title": "The Believers' Supplication", "verses": [
+    {"title": "L'invocation des croyants", "verses": [
         {"ar": "رَبَّنَا إِنَّنَا سَمِعْنَا مُنَادِيًا يُنَادِي لِلْإِيمَانِ", "en": "Our Lord, indeed we have heard\na caller calling to faith:", "ref": "3:193a", "surah": 3, "ayah": 193},
         {"ar": "أَنْ آمِنُوا بِرَبِّكُمْ فَآمَنَّا", "en": "Believe in your Lord, \nand we have believed.", "ref": "3:193b", "surah": 3, "ayah": 193},
         {"ar": "رَبَّنَا فَاغْفِرْ لَنَا ذُنُوبَنَا وَكَفِّرْ عَنَّا سَيِّئَاتِنَا", "en": "Our Lord, forgive us our sins\nand remove from us\nour misdeeds.", "ref": "3:193c", "surah": 3, "ayah": 193},
@@ -880,7 +880,7 @@ PASSAGES = [
     ]},
 
     # 87 — The Throne of Allah
-    {"title": "The Throne of Allah", "verses": [
+    {"title": "Le Trône d'Allah", "verses": [
         {"ar": "إِنَّ رَبَّكُمُ اللّٰهُ الَّذِي خَلَقَ السَّمَاوَاتِ وَالْأَرْضَ فِي سِتَّةِ أَيَّامٍ", "en": "Indeed, your Lord is Allah\nwho created the heavens\nand earth in six days,", "ref": "7:54a", "surah": 7, "ayah": 54},
         {"ar": "ثُمَّ اسْتَوَىٰ عَلَى الْعَرْشِ", "en": "Then He established Himself\nabove the Throne.", "ref": "7:54b", "surah": 7, "ayah": 54},
         {"ar": "يُغْشِي اللَّيْلَ النَّهَارَ يَطْلُبُهُ حَثِيثًا", "en": "He covers the night\nwith the day pursuing it rapidly.", "ref": "7:54c", "surah": 7, "ayah": 54},
@@ -888,21 +888,21 @@ PASSAGES = [
     ]},
 
     # 88 — Dua for Guidance
-    {"title": "Dua for Guidance", "verses": [
+    {"title": "Invocation pour la guidance", "verses": [
         {"ar": "رَبَّنَا لَا تُزِغْ قُلُوبَنَا بَعْدَ إِذْ هَدَيْتَنَا", "en": "Our Lord, do not let\nour hearts deviate after\nYou have guided us,", "ref": "3:8a", "surah": 3, "ayah": 8},
         {"ar": "وَهَبْ لَنَا مِن لَّدُنكَ رَحْمَةً", "en": "And grant us from Yourself\nmercy.", "ref": "3:8b", "surah": 3, "ayah": 8},
-        {"ar": "إِنَّكَ أَنتَ الْوَهَّابُ", "en": "Indeed, You are\nthe Bestower.", "ref": "3:8c", "surah": 3, "ayah": 8},
+        {"ar": "إِنَّكَ أَنتَ الْوَهَّابُ", "en": "Indeed, You are the Bestower.", "ref": "3:8c", "surah": 3, "ayah": 8},
     ]},
 
     # 89 — Surah Al-Waqiah — The Inevitable
-    {"title": "Al-Waqiah — The Inevitable Event", "verses": [
+    {"title": "Al-Waqi'ah — L'Événement inévitable", "verses": [
         {"ar": "إِذَا وَقَعَتِ الْوَاقِعَةُ", "en": "When the Inevitable Event occurs,", "ref": "56:1", "surah": 56, "ayah": 1},
         {"ar": "لَيْسَ لِوَقْعَتِهَا كَاذِبَةٌ", "en": "There is, at its occurrence, \nno denial.", "ref": "56:2", "surah": 56, "ayah": 2},
         {"ar": "خَافِضَةٌ رَّافِعَةٌ", "en": "It will bring down\nand raise up.", "ref": "56:3", "surah": 56, "ayah": 3},
     ]},
 
     # 90 — The People of the Right Hand
-    {"title": "The People of the Right Hand", "verses": [
+    {"title": "Les gens de la droite", "verses": [
         {"ar": "وَأَصْحَابُ الْيَمِينِ مَا أَصْحَابُ الْيَمِينِ", "en": "And the companions of the right — \nwhat are the companions of the right?", "ref": "56:27", "surah": 56, "ayah": 27},
         {"ar": "فِي سِدْرٍ مَّخْضُودٍ", "en": "They will be among\nthornless lote trees,", "ref": "56:28", "surah": 56, "ayah": 28},
         {"ar": "وَطَلْحٍ مَّنضُودٍ", "en": "And clustered plantains,", "ref": "56:29", "surah": 56, "ayah": 29},
@@ -911,7 +911,7 @@ PASSAGES = [
     ]},
 
     # 91 — Glorifying Allah
-    {"title": "Glorifying Allah — Tasbih", "verses": [
+    {"title": "Glorifier Allah — Le Tasbih", "verses": [
         {"ar": "سَبَّحَ لِلّٰهِ مَا فِي السَّمَاوَاتِ وَالْأَرْضِ", "en": "Whatever is in the heavens\nand earth glorifies Allah,", "ref": "57:1a", "surah": 57, "ayah": 1},
         {"ar": "وَهُوَ الْعَزِيزُ الْحَكِيمُ", "en": "And He is the Exalted in Might, \nthe Wise.", "ref": "57:1b", "surah": 57, "ayah": 1},
         {"ar": "لَهُ مُلْكُ السَّمَاوَاتِ وَالْأَرْضِ يُحْيِي وَيُمِيتُ", "en": "His is the dominion of the heavens\nand earth. He gives life\nand causes death.", "ref": "57:2", "surah": 57, "ayah": 2},
@@ -919,27 +919,27 @@ PASSAGES = [
     ]},
 
     # 92 — Allah is Al-Awwal and Al-Akhir
-    {"title": "The First and The Last", "verses": [
+    {"title": "Le Premier et le Dernier", "verses": [
         {"ar": "هُوَ الْأَوَّلُ وَالْآخِرُ وَالظَّاهِرُ وَالْبَاطِنُ", "en": "He is the First and the Last, \nthe Ascendant and the Intimate,", "ref": "57:3a", "surah": 57, "ayah": 3},
         {"ar": "وَهُوَ بِكُلِّ شَيْءٍ عَلِيمٌ", "en": "And He is, \nof all things, Knowing.", "ref": "57:3b", "surah": 57, "ayah": 3},
     ]},
 
     # 93 — Surah Al-Hadid — The Iron
-    {"title": "This World is Fleeting", "verses": [
+    {"title": "Ce bas monde est éphémère", "verses": [
         {"ar": "اعْلَمُوا أَنَّمَا الْحَيَاةُ الدُّنْيَا لَعِبٌ وَلَهْوٌ وَزِينَةٌ", "en": "Know that the life of this world\nis but amusement and diversion\nand adornment,", "ref": "57:20a", "surah": 57, "ayah": 20},
         {"ar": "وَتَفَاخُرٌ بَيْنَكُمْ وَتَكَاثُرٌ فِي الْأَمْوَالِ وَالْأَوْلَادِ", "en": "And boasting among yourselves\nand competition in increase\nof wealth and children.", "ref": "57:20b", "surah": 57, "ayah": 20},
         {"ar": "وَمَا الْحَيَاةُ الدُّنْيَا إِلَّا مَتَاعُ الْغُرُورِ", "en": "And the worldly life is not but\nthe enjoyment of self-delusion.", "ref": "57:20c", "surah": 57, "ayah": 20},
     ]},
 
     # 94 — Competing for the Hereafter
-    {"title": "Race Toward the Hereafter", "verses": [
+    {"title": "La course vers l'au-delà", "verses": [
         {"ar": "سَابِقُوا إِلَىٰ مَغْفِرَةٍ مِّن رَّبِّكُمْ وَجَنَّةٍ عَرْضُهَا كَعَرْضِ السَّمَاءِ وَالْأَرْضِ", "en": "Race toward forgiveness\nfrom your Lord and a garden\nwhose width is like the width of the heavens and earth,", "ref": "57:21a", "surah": 57, "ayah": 21},
         {"ar": "أُعِدَّتْ لِلَّذِينَ آمَنُوا بِاللّٰهِ وَرُسُلِهِ", "en": "Prepared for those who believed\nin Allah and His messengers.", "ref": "57:21b", "surah": 57, "ayah": 21},
         {"ar": "ذَٰلِكَ فَضْلُ اللّٰهِ يُؤْتِيهِ مَن يَشَاءُ", "en": "That is the bounty of Allah\nwhich He gives to whom He wills.", "ref": "57:21c", "surah": 57, "ayah": 21},
     ]},
 
     # 95 — Allah Sees Everything
-    {"title": "Allah Sees Everything", "verses": [
+    {"title": "Allah voit tout", "verses": [
         {"ar": "أَلَمْ تَرَ أَنَّ اللّٰهَ يَعْلَمُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ", "en": "Do you not see that Allah knows\nwhat is in the heavens\nand what is on the earth?", "ref": "58:7a", "surah": 58, "ayah": 7},
         {"ar": "مَا يَكُونُ مِن نَّجْوَىٰ ثَلَاثَةٍ إِلَّا هُوَ رَابِعُهُمْ", "en": "There is no private conversation\nbetween three but that He is\nthe fourth of them,", "ref": "58:7b", "surah": 58, "ayah": 7},
         {"ar": "وَلَا خَمْسَةٍ إِلَّا هُوَ سَادِسُهُمْ", "en": "Nor between five\nbut that He is the sixth of them,", "ref": "58:7c", "surah": 58, "ayah": 7},
@@ -947,20 +947,20 @@ PASSAGES = [
     ]},
 
     # 96 — Surah Al-Mulk — Protection
-    {"title": "Protection Through Al-Mulk", "verses": [
+    {"title": "La protection par Al-Mulk", "verses": [
         {"ar": "أَمَّن هَٰذَا الَّذِي هُوَ جُندٌ لَّكُمْ يَنصُرُكُم مِّن دُونِ الرَّحْمَٰنِ", "en": "Who is it that could be\nan army for you to aid you\nother than the Most Merciful?", "ref": "67:20", "surah": 67, "ayah": 20},
         {"ar": "قُلْ هُوَ الرَّحْمَٰنُ آمَنَّا بِهِ وَعَلَيْهِ تَوَكَّلْنَا", "en": "Say: He is the Most Merciful;\nwe have believed in Him\nand upon Him we rely.", "ref": "67:29a", "surah": 67, "ayah": 29},
     ]},
 
     # 97 — Al-Haqqah — The Reality
-    {"title": "Al-Haqqah — The Reality", "verses": [
+    {"title": "Al-Haqqah — La Vérité inéluctable", "verses": [
         {"ar": "الْحَاقَّةُ", "en": "The Reality.", "ref": "69:1", "surah": 69, "ayah": 1},
         {"ar": "مَا الْحَاقَّةُ", "en": "What is the Reality?", "ref": "69:2", "surah": 69, "ayah": 2},
         {"ar": "وَمَا أَدْرَاكَ مَا الْحَاقَّةُ", "en": "And what can make you know\nwhat the Reality is?", "ref": "69:3", "surah": 69, "ayah": 3},
     ]},
 
     # 98 — Al-Ma'arij — Ways of Ascent
-    {"title": "Patience is Beautiful", "verses": [
+    {"title": "La belle patience", "verses": [
         {"ar": "إِنَّ الْإِنسَانَ خُلِقَ هَلُوعًا", "en": "Indeed, mankind was created\nanxious:", "ref": "70:19", "surah": 70, "ayah": 19},
         {"ar": "إِذَا مَسَّهُ الشَّرُّ جَزُوعًا", "en": "When evil touches him, \nimpatient,", "ref": "70:20", "surah": 70, "ayah": 20},
         {"ar": "وَإِذَا مَسَّهُ الْخَيْرُ مَنُوعًا", "en": "And when good touches him, \nwithholding of it.", "ref": "70:21", "surah": 70, "ayah": 21},
@@ -969,20 +969,20 @@ PASSAGES = [
     ]},
 
     # 99 — Surah Nuh — Prophet Nuh's Dua
-    {"title": "The Dua of Prophet Nuh", "verses": [
+    {"title": "L'invocation du prophète Noé", "verses": [
         {"ar": "رَّبِّ اغْفِرْ لِي وَلِوَالِدَيَّ وَلِمَن دَخَلَ بَيْتِيَ مُؤْمِنًا", "en": "My Lord, forgive me\nand my parents and whoever\nenters my house a believer.", "ref": "71:28a", "surah": 71, "ayah": 28},
         {"ar": "وَلِلْمُؤْمِنِينَ وَالْمُؤْمِنَاتِ", "en": "And the believing men\nand believing women.", "ref": "71:28b", "surah": 71, "ayah": 28},
     ]},
 
     # 100 — Surah Al-Jinn
-    {"title": "The Jinn Bear Witness", "verses": [
+    {"title": "Les djinns témoignent", "verses": [
         {"ar": "قُلْ أُوحِيَ إِلَيَّ أَنَّهُ اسْتَمَعَ نَفَرٌ مِّنَ الْجِنِّ", "en": "Say: It has been revealed to me\nthat a group of the jinn\nlistened,", "ref": "72:1a", "surah": 72, "ayah": 1},
         {"ar": "فَقَالُوا إِنَّا سَمِعْنَا قُرْآنًا عَجَبًا", "en": "And said: Indeed, we have heard\na wondrous Quran.", "ref": "72:1b", "surah": 72, "ayah": 1},
         {"ar": "يَهْدِي إِلَى الرُّشْدِ فَآمَنَّا بِهِ", "en": "It guides to the right course, \nand we have believed in it.", "ref": "72:2a", "surah": 72, "ayah": 2},
     ]},
 
     # 101 — Al-Muddaththir
-    {"title": "Rise and Warn", "verses": [
+    {"title": "Lève-toi et avertis", "verses": [
         {"ar": "يَا أَيُّهَا الْمُدَّثِّرُ", "en": "O you who covers himself!", "ref": "74:1", "surah": 74, "ayah": 1},
         {"ar": "قُمْ فَأَنذِرْ", "en": "Arise and warn.", "ref": "74:2", "surah": 74, "ayah": 2},
         {"ar": "وَرَبَّكَ فَكَبِّرْ", "en": "And your Lord glorify.", "ref": "74:3", "surah": 74, "ayah": 3},
@@ -991,21 +991,21 @@ PASSAGES = [
     ]},
 
     # 102 — Al-Insan — Gratitude to Allah
-    {"title": "Gratitude for Allah's Blessings", "verses": [
+    {"title": "La reconnaissance des bienfaits d'Allah", "verses": [
         {"ar": "هَلْ أَتَىٰ عَلَى الْإِنسَانِ حِينٌ مِّنَ الدَّهْرِ لَمْ يَكُن شَيْئًا مَّذْكُورًا", "en": "Has there not come upon man\na period of time when he was not\na thing even mentioned?", "ref": "76:1", "surah": 76, "ayah": 1},
         {"ar": "إِنَّا خَلَقْنَا الْإِنسَانَ مِن نُّطْفَةٍ أَمْشَاجٍ نَّبْتَلِيهِ", "en": "Indeed, We created man\nfrom a sperm-drop mixture\nthat We may test him.", "ref": "76:2a", "surah": 76, "ayah": 2},
         {"ar": "فَجَعَلْنَاهُ سَمِيعًا بَصِيرًا", "en": "And We made him\nhearing and seeing.", "ref": "76:2b", "surah": 76, "ayah": 2},
     ]},
 
     # 103 — Al-Mursalat
-    {"title": "Woe to the Deniers", "verses": [
+    {"title": "Malheur à ceux qui renient", "verses": [
         {"ar": "وَيْلٌ يَوْمَئِذٍ لِّلْمُكَذِّبِينَ", "en": "Woe that Day\nto the deniers.", "ref": "77:15", "surah": 77, "ayah": 15},
         {"ar": "أَلَمْ نَخْلُقكُّم مِّن مَّاءٍ مَّهِينٍ", "en": "Did We not create you\nfrom a liquid disdained?", "ref": "77:20", "surah": 77, "ayah": 20},
         {"ar": "فَقَدَرْنَا فَنِعْمَ الْقَادِرُونَ", "en": "And We determined it\nand how excellent are We\nto determine.", "ref": "77:23", "surah": 77, "ayah": 23},
     ]},
 
     # 104 — An-Naba — The Great News
-    {"title": "An-Naba — The Great News", "verses": [
+    {"title": "An-Naba — La grande nouvelle", "verses": [
         {"ar": "عَمَّ يَتَسَاءَلُونَ", "en": "About what are they asking one another?", "ref": "78:1", "surah": 78, "ayah": 1},
         {"ar": "عَنِ النَّبَإِ الْعَظِيمِ", "en": "About the great news,", "ref": "78:2", "surah": 78, "ayah": 2},
         {"ar": "الَّذِي هُمْ فِيهِ مُخْتَلِفُونَ", "en": "That over which\nthey are in disagreement.", "ref": "78:3", "surah": 78, "ayah": 3},
@@ -1014,14 +1014,14 @@ PASSAGES = [
     ]},
 
     # 105 — An-Nazi'at
-    {"title": "The Hereafter is Near", "verses": [
+    {"title": "L'au-delà est proche", "verses": [
         {"ar": "يَوْمَ تَرْجُفُ الرَّاجِفَةُ", "en": "On the Day\nthe blast will convulse,", "ref": "79:6", "surah": 79, "ayah": 6},
         {"ar": "تَتْبَعُهَا الرَّادِفَةُ", "en": "There will follow it\nthe subsequent one.", "ref": "79:7", "surah": 79, "ayah": 7},
         {"ar": "أَأَنتُمْ أَشَدُّ خَلْقًا أَمِ السَّمَاءُ بَنَاهَا", "en": "Are you a more difficult creation\nor is the heaven?\nHe constructed it.", "ref": "79:27", "surah": 79, "ayah": 27},
     ]},
 
     # 106 — Abasa — He Frowned
-    {"title": "Equal Worth of Every Soul", "verses": [
+    {"title": "La valeur égale de chaque âme", "verses": [
         {"ar": "فَمَن شَاءَ ذَكَرَهُ", "en": "So whoever wills\nmay remember it.", "ref": "80:12", "surah": 80, "ayah": 12},
         {"ar": "فِي صُحُفٍ مُّكَرَّمَةٍ", "en": "In honored sheets of scripture,", "ref": "80:13", "surah": 80, "ayah": 13},
         {"ar": "مَّرْفُوعَةٍ مُّطَهَّرَةٍ", "en": "Exalted and purified,", "ref": "80:14", "surah": 80, "ayah": 14},
@@ -1030,7 +1030,7 @@ PASSAGES = [
     ]},
 
     # 107 — At-Takwir — The Folding Up
-    {"title": "At-Takwir — The Folding Up", "verses": [
+    {"title": "At-Takwir — L'Obscurcissement", "verses": [
         {"ar": "إِذَا الشَّمْسُ كُوِّرَتْ", "en": "When the sun is wrapped up,", "ref": "81:1", "surah": 81, "ayah": 1},
         {"ar": "وَإِذَا النُّجُومُ انكَدَرَتْ", "en": "And when the stars fall,", "ref": "81:2", "surah": 81, "ayah": 2},
         {"ar": "وَإِذَا الْجِبَالُ سُيِّرَتْ", "en": "And when the mountains are removed,", "ref": "81:3", "surah": 81, "ayah": 3},
@@ -1038,28 +1038,28 @@ PASSAGES = [
     ]},
 
     # 108 — Al-Infitar — The Cleaving
-    {"title": "Al-Infitar — The Cleaving", "verses": [
+    {"title": "Al-Infitar — La Rupture", "verses": [
         {"ar": "إِذَا السَّمَاءُ انفَطَرَتْ", "en": "When the sky breaks apart,", "ref": "82:1", "surah": 82, "ayah": 1},
         {"ar": "يَا أَيُّهَا الْإِنسَانُ مَا غَرَّكَ بِرَبِّكَ الْكَرِيمِ", "en": "O mankind, what has deceived you\nconcerning your Lord, \nthe Generous,", "ref": "82:6", "surah": 82, "ayah": 6},
         {"ar": "الَّذِي خَلَقَكَ فَسَوَّاكَ فَعَدَلَكَ", "en": "Who created you, proportioned you, \nand assembled you?", "ref": "82:7", "surah": 82, "ayah": 7},
     ]},
 
     # 109 — Al-Mutaffifin — The Defrauders
-    {"title": "Justice in All Things", "verses": [
+    {"title": "La justice en toute chose", "verses": [
         {"ar": "وَيْلٌ لِّلْمُطَفِّفِينَ", "en": "Woe to those who give less\nthan due,", "ref": "83:1", "surah": 83, "ayah": 1},
         {"ar": "الَّذِينَ إِذَا اكْتَالُوا عَلَى النَّاسِ يَسْتَوْفُونَ", "en": "Who, when they take a measure\nfrom people, take in full,", "ref": "83:2", "surah": 83, "ayah": 2},
         {"ar": "وَإِذَا كَالُوهُمْ أَو وَّزَنُوهُمْ يُخْسِرُونَ", "en": "But if they give by measure\nor by weight to them, \nthey cause loss.", "ref": "83:3", "surah": 83, "ayah": 3},
     ]},
 
     # 110 — Al-Buruj — The Constellations
-    {"title": "Allah is the Forgiving, the Loving", "verses": [
+    {"title": "Allah, le Pardonneur, le Bien-Aimant", "verses": [
         {"ar": "وَهُوَ الْغَفُورُ الْوَدُودُ", "en": "And He is\nthe Forgiving, the Affectionate,", "ref": "85:14", "surah": 85, "ayah": 14},
         {"ar": "ذُو الْعَرْشِ الْمَجِيدُ", "en": "Owner of the Glorious Throne,", "ref": "85:15", "surah": 85, "ayah": 15},
         {"ar": "فَعَّالٌ لِّمَا يُرِيدُ", "en": "Effecter of what He intends.", "ref": "85:16", "surah": 85, "ayah": 16},
     ]},
 
     # 111 — At-Tariq — The Night Star
-    {"title": "At-Tariq — The Night Star", "verses": [
+    {"title": "At-Tariq — L'Astre nocturne", "verses": [
         {"ar": "وَالسَّمَاءِ وَالطَّارِقِ", "en": "By the sky\nand the night comer,", "ref": "86:1", "surah": 86, "ayah": 1},
         {"ar": "وَمَا أَدْرَاكَ مَا الطَّارِقُ", "en": "And what can make you know\nwhat is the night comer?", "ref": "86:2", "surah": 86, "ayah": 2},
         {"ar": "النَّجْمُ الثَّاقِبُ", "en": "It is the piercing star.", "ref": "86:3", "surah": 86, "ayah": 3},
@@ -1067,7 +1067,7 @@ PASSAGES = [
     ]},
 
     # 112 — Al-A'la — The Most High
-    {"title": "Al-A'la — The Most High", "verses": [
+    {"title": "Al-A'la — Le Très-Haut", "verses": [
         {"ar": "سَبِّحِ اسْمَ رَبِّكَ الْأَعْلَى", "en": "Exalt the name of your Lord, \nthe Most High,", "ref": "87:1", "surah": 87, "ayah": 1},
         {"ar": "الَّذِي خَلَقَ فَسَوَّىٰ", "en": "Who created and proportioned,", "ref": "87:2", "surah": 87, "ayah": 2},
         {"ar": "وَالَّذِي قَدَّرَ فَهَدَىٰ", "en": "And who destined\nand then guided,", "ref": "87:3", "surah": 87, "ayah": 3},
@@ -1076,7 +1076,7 @@ PASSAGES = [
     ]},
 
     # 113 — Al-Balad — The City
-    {"title": "The Uphill Road", "verses": [
+    {"title": "Le chemin escarpé", "verses": [
         {"ar": "وَهَدَيْنَاهُ النَّجْدَيْنِ", "en": "And We have shown him\nthe two ways.", "ref": "90:10", "surah": 90, "ayah": 10},
         {"ar": "فَلَا اقْتَحَمَ الْعَقَبَةَ", "en": "But he has not\nattempted the difficult path.", "ref": "90:11", "surah": 90, "ayah": 11},
         {"ar": "وَمَا أَدْرَاكَ مَا الْعَقَبَةُ", "en": "And what can make you know\nwhat is the difficult path?", "ref": "90:12", "surah": 90, "ayah": 12},
@@ -1085,7 +1085,7 @@ PASSAGES = [
     ]},
 
     # 114 — Al-Shams — The Sun
-    {"title": "Al-Shams — The Sun", "verses": [
+    {"title": "Ash-Shams — Le Soleil", "verses": [
         {"ar": "وَالشَّمْسِ وَضُحَاهَا", "en": "By the sun and its brightness,", "ref": "91:1", "surah": 91, "ayah": 1},
         {"ar": "وَالْقَمَرِ إِذَا تَلَاهَا", "en": "And the moon when\nit follows it,", "ref": "91:2", "surah": 91, "ayah": 2},
         {"ar": "وَالنَّهَارِ إِذَا جَلَّاهَا", "en": "And the day\nwhen it displays it,", "ref": "91:3", "surah": 91, "ayah": 3},
@@ -1094,14 +1094,14 @@ PASSAGES = [
     ]},
 
     # 115 — Al-Layl — The Night
-    {"title": "Al-Layl — The Night", "verses": [
+    {"title": "Al-Layl — La Nuit", "verses": [
         {"ar": "وَاللَّيْلِ إِذَا يَغْشَىٰ", "en": "By the night\nwhen it covers,", "ref": "92:1", "surah": 92, "ayah": 1},
         {"ar": "وَالنَّهَارِ إِذَا تَجَلَّىٰ", "en": "And the day\nwhen it appears,", "ref": "92:2", "surah": 92, "ayah": 2},
         {"ar": "إِنَّ سَعْيَكُمْ لَشَتَّىٰ", "en": "Indeed, your efforts\nare diverse.", "ref": "92:4", "surah": 92, "ayah": 4},
     ]},
 
     # 116 — Al-Alaq — The Clot
-    {"title": "Al-Alaq — Read!", "verses": [
+    {"title": "Al-Alaq — Lis !", "verses": [
         {"ar": "اقْرَأْ بِاسْمِ رَبِّكَ الَّذِي خَلَقَ", "en": "Read in the name of your Lord\nwho created,", "ref": "96:1", "surah": 96, "ayah": 1},
         {"ar": "خَلَقَ الْإِنسَانَ مِنْ عَلَقٍ", "en": "Created man\nfrom a clinging substance.", "ref": "96:2", "surah": 96, "ayah": 2},
         {"ar": "اقْرَأْ وَرَبُّكَ الْأَكْرَمُ", "en": "Read, and your Lord\nis the Most Generous,", "ref": "96:3", "surah": 96, "ayah": 3},
@@ -1110,14 +1110,14 @@ PASSAGES = [
     ]},
 
     # 117 — Al-Bayyinah
-    {"title": "The Clear Evidence", "verses": [
+    {"title": "La preuve évidente", "verses": [
         {"ar": "إِنَّ الَّذِينَ آمَنُوا وَعَمِلُوا الصَّالِحَاتِ أُولَٰئِكَ هُمْ خَيْرُ الْبَرِيَّةِ", "en": "Indeed, those who have believed\nand done righteous deeds — \nthose are the best of creatures.", "ref": "98:7", "surah": 98, "ayah": 7},
         {"ar": "جَزَاؤُهُمْ عِندَ رَبِّهِمْ جَنَّاتُ عَدْنٍ تَجْرِي مِن تَحْتِهَا الْأَنْهَارُ", "en": "Their reward with Allah will be\ngardens of perpetual residence\nbeneath which rivers flow,", "ref": "98:8a", "surah": 98, "ayah": 8},
         {"ar": "خَالِدِينَ فِيهَا أَبَدًا رَّضِيَ اللّٰهُ عَنْهُمْ وَرَضُوا عَنْهُ", "en": "Wherein they abide forever, \nAllah being pleased with them\nand they pleased with Him.", "ref": "98:8b", "surah": 98, "ayah": 8},
     ]},
 
     # 118 — Al-Takathur — Rivalry
-    {"title": "Al-Takathur — The Rivalry", "verses": [
+    {"title": "At-Takathur — La course aux richesses", "verses": [
         {"ar": "أَلْهَاكُمُ التَّكَاثُرُ", "en": "Rivalry in worldly increase\nhas distracted you,", "ref": "102:1", "surah": 102, "ayah": 1},
         {"ar": "حَتَّىٰ زُرْتُمُ الْمَقَابِرَ", "en": "Until you visit\nthe graveyards.", "ref": "102:2", "surah": 102, "ayah": 2},
         {"ar": "كَلَّا سَوْفَ تَعْلَمُونَ", "en": "No! You are going\nto know.", "ref": "102:3", "surah": 102, "ayah": 3},
@@ -1125,21 +1125,21 @@ PASSAGES = [
     ]},
 
     # 119 — Al-Humazah
-    {"title": "Beware of Backbiting", "verses": [
+    {"title": "Se méfier de la médisance", "verses": [
         {"ar": "وَيْلٌ لِّكُلِّ هُمَزَةٍ لُّمَزَةٍ", "en": "Woe to every scorner\nand mocker,", "ref": "104:1", "surah": 104, "ayah": 1},
         {"ar": "الَّذِي جَمَعَ مَالًا وَعَدَّدَهُ", "en": "Who collects wealth\nand repeatedly counts it.", "ref": "104:2", "surah": 104, "ayah": 2},
         {"ar": "يَحْسَبُ أَنَّ مَالَهُ أَخْلَدَهُ", "en": "He thinks that his wealth\nwill make him immortal.", "ref": "104:3", "surah": 104, "ayah": 3},
     ]},
 
     # 120 — Al-Fil — The Elephant
-    {"title": "Al-Fil — Allah Protects", "verses": [
+    {"title": "Al-Fil — Allah protège", "verses": [
         {"ar": "أَلَمْ تَرَ كَيْفَ فَعَلَ رَبُّكَ بِأَصْحَابِ الْفِيلِ", "en": "Have you not considered\nhow your Lord dealt\nwith the companions of the elephant?", "ref": "105:1", "surah": 105, "ayah": 1},
         {"ar": "أَلَمْ يَجْعَلْ كَيْدَهُمْ فِي تَضْلِيلٍ", "en": "Did He not make\ntheir plan into misguidance?", "ref": "105:2", "surah": 105, "ayah": 2},
         {"ar": "وَأَرْسَلَ عَلَيْهِمْ طَيْرًا أَبَابِيلَ", "en": "And He sent against them\nbirds in flocks,", "ref": "105:3", "surah": 105, "ayah": 3},
     ]},
 
     # 121 — Quraysh
-    {"title": "Quraysh — Allah's Blessings", "verses": [
+    {"title": "Quraysh — Les bienfaits d'Allah", "verses": [
         {"ar": "لِإِيلَافِ قُرَيْشٍ", "en": "For the accustomed security\nof the Quraysh,", "ref": "106:1", "surah": 106, "ayah": 1},
         {"ar": "إِيلَافِهِمْ رِحْلَةَ الشِّتَاءِ وَالصَّيْفِ", "en": "Their accustomed security\nin the journey of winter and summer,", "ref": "106:2", "surah": 106, "ayah": 2},
         {"ar": "فَلْيَعْبُدُوا رَبَّ هَٰذَا الْبَيْتِ", "en": "Let them worship\nthe Lord of this House,", "ref": "106:3", "surah": 106, "ayah": 3},
@@ -1147,44 +1147,44 @@ PASSAGES = [
     ]},
 
     # 122 — Al-Ma'un — Small Kindnesses
-    {"title": "Al-Ma'un — Small Kindnesses", "verses": [
+    {"title": "Al-Ma'un — Les petites bontés", "verses": [
         {"ar": "أَرَأَيْتَ الَّذِي يُكَذِّبُ بِالدِّينِ", "en": "Have you seen the one\nwho denies the Recompense?", "ref": "107:1", "surah": 107, "ayah": 1},
         {"ar": "فَذَٰلِكَ الَّذِي يَدُعُّ الْيَتِيمَ", "en": "For that is the one\nwho drives away the orphan,", "ref": "107:2", "surah": 107, "ayah": 2},
         {"ar": "وَلَا يَحُضُّ عَلَىٰ طَعَامِ الْمِسْكِينِ", "en": "And does not encourage\nthe feeding of the poor.", "ref": "107:3", "surah": 107, "ayah": 3},
     ]},
 
     # 123 — Al-Masad — Consequences of Evil
-    {"title": "No Wealth Can Save You", "verses": [
+    {"title": "Aucune richesse ne peut te sauver", "verses": [
         {"ar": "مَا أَغْنَىٰ عَنْهُ مَالُهُ وَمَا كَسَبَ", "en": "His wealth will not avail him\nor that which he gained.", "ref": "111:2", "surah": 111, "ayah": 2},
     ]},
 
     # 124 — Dua for children
-    {"title": "Dua for Righteous Children", "verses": [
+    {"title": "Invocation pour des enfants pieux", "verses": [
         {"ar": "رَبِّ هَبْ لِي مِن لَّدُنكَ ذُرِّيَّةً طَيِّبَةً", "en": "My Lord, grant me\nfrom Yourself a good offspring.", "ref": "3:38b", "surah": 3, "ayah": 38},
         {"ar": "إِنَّكَ سَمِيعُ الدُّعَاءِ", "en": "Indeed, You are\nthe Hearer of supplication.", "ref": "3:38c", "surah": 3, "ayah": 38},
     ]},
 
     # 125 — Dua of Zakariyya
-    {"title": "The Dua of Zakariyya", "verses": [
+    {"title": "L'invocation de Zacharie", "verses": [
         {"ar": "رَبِّ لَا تَذَرْنِي فَرْدًا وَأَنتَ خَيْرُ الْوَارِثِينَ", "en": "My Lord, do not leave me alone\nand You are the best of inheritors.", "ref": "21:89", "surah": 21, "ayah": 89},
         {"ar": "فَاسْتَجَبْنَا لَهُ وَوَهَبْنَا لَهُ يَحْيَىٰ", "en": "So We responded to him\nand gave him Yahya.", "ref": "21:90a", "surah": 21, "ayah": 90},
         {"ar": "وَأَصْلَحْنَا لَهُ زَوْجَهُ", "en": "And We corrected\nhis wife for him.", "ref": "21:90b", "surah": 21, "ayah": 90},
     ]},
 
     # 126 — The Promise of Allah
-    {"title": "The Promise of Allah", "verses": [
+    {"title": "La promesse d'Allah", "verses": [
         {"ar": "وَعْدَ اللّٰهِ لَا يُخْلِفُ اللّٰهُ وَعْدَهُ", "en": "The promise of Allah — \nAllah does not fail\nin His promise.", "ref": "30:6b", "surah": 30, "ayah": 6},
         {"ar": "وَلَٰكِنَّ أَكْثَرَ النَّاسِ لَا يَعْلَمُونَ", "en": "But most of the people\ndo not know.", "ref": "30:6c", "surah": 30, "ayah": 6},
     ]},
 
     # 127 — Allah is Near
-    {"title": "Allah is Closer Than You Think", "verses": [
+    {"title": "Allah est plus proche que tu ne le penses", "verses": [
         {"ar": "وَلَقَدْ خَلَقْنَا الْإِنسَانَ وَنَعْلَمُ مَا تُوَسْوِسُ بِهِ نَفْسُهُ", "en": "We have already created man\nand know what his soul\nwhispers to him.", "ref": "50:16a", "surah": 50, "ayah": 16},
         {"ar": "وَنَحْنُ أَقْرَبُ إِلَيْهِ مِنْ حَبْلِ الْوَرِيدِ", "en": "And We are closer to him\nthan his jugular vein.", "ref": "50:16b", "surah": 50, "ayah": 16},
     ]},
 
     # 128 — The Soul at Rest
-    {"title": "The Reassured Soul", "verses": [
+    {"title": "L'âme apaisée", "verses": [
         {"ar": "يَا أَيَّتُهَا النَّفْسُ الْمُطْمَئِنَّةُ", "en": "O reassured soul,", "ref": "89:27", "surah": 89, "ayah": 27},
         {"ar": "ارْجِعِي إِلَىٰ رَبِّكِ رَاضِيَةً مَّرْضِيَّةً", "en": "Return to your Lord\nwell-pleased and pleasing to Him,", "ref": "89:28", "surah": 89, "ayah": 28},
         {"ar": "فَادْخُلِي فِي عِبَادِي", "en": "And enter among\nMy righteous servants,", "ref": "89:29", "surah": 89, "ayah": 29},
@@ -1192,14 +1192,14 @@ PASSAGES = [
     ]},
 
     # 129 — The Greatness of the Quran
-    {"title": "The Greatness of the Quran", "verses": [
+    {"title": "La grandeur du Coran", "verses": [
         {"ar": "لَوْ أَنزَلْنَا هَٰذَا الْقُرْآنَ عَلَىٰ جَبَلٍ", "en": "If We had sent down\nthis Quran upon a mountain,", "ref": "59:21a", "surah": 59, "ayah": 21},
         {"ar": "لَّرَأَيْتَهُ خَاشِعًا مُّتَصَدِّعًا مِّنْ خَشْيَةِ اللّٰهِ", "en": "You would have seen it\nhumbled and split apart\nfrom fear of Allah.", "ref": "59:21b", "surah": 59, "ayah": 21},
         {"ar": "وَتِلْكَ الْأَمْثَالُ نَضْرِبُهَا لِلنَّاسِ لَعَلَّهُمْ يَتَفَكَّرُونَ", "en": "And these examples We present\nto the people that perhaps\nthey will give thought.", "ref": "59:21c", "surah": 59, "ayah": 21},
     ]},
 
     # 130 — The Correct Path
-    {"title": "The Straight Path", "verses": [
+    {"title": "Le droit chemin", "verses": [
         {"ar": "وَأَنَّ هَٰذَا صِرَاطِي مُسْتَقِيمًا فَاتَّبِعُوهُ", "en": "And this is My path, \nwhich is straight, \nso follow it,", "ref": "6:153a", "surah": 6, "ayah": 153},
         {"ar": "وَلَا تَتَّبِعُوا السُّبُلَ فَتَفَرَّقَ بِكُمْ عَن سَبِيلِهِ", "en": "And do not follow other ways, \nfor you will be separated\nfrom His way.", "ref": "6:153b", "surah": 6, "ayah": 153},
     ]},
@@ -2170,31 +2170,50 @@ def dl_video(url, path, timeout=60):
     return False
 
 def _extract_video_frames(video_path, n_frames, out_dir):
-    """Extrait exactement n_frames (au FPS de la vidéo finale), recadrées en
-    portrait 1080x1920 (crop centré, cadre rempli). Boucle le clip source si
-    trop court pour couvrir n_frames. Le clip est ralenti (setpts) avant
-    extraction — beaucoup de b-roll (survols aériens, vagues) est filmé à
-    vitesse réelle, qui parait rapide/agitée une fois recadrée en gros plan
-    portrait ; ralentir donne un défilement doux et cinématique plutôt que
-    saccadé. Retourne une liste d'images PIL, ou une liste vide en cas
-    d'échec (jamais d'exception qui remonte)."""
+    """Extrait des frames d'un clip (au FPS de la vidéo finale), recadrées en
+    portrait 1080x1920 (crop centré, cadre rempli). Le clip est ralenti
+    (setpts) avant extraction — beaucoup de b-roll (survols aériens, vagues)
+    est filmé à vitesse réelle, qui parait rapide/agitée une fois recadrée en
+    gros plan portrait ; ralentir donne un défilement doux et cinématique
+    plutôt que saccadé. Retourne une liste d'images PIL, ou une liste vide en
+    cas d'échec (jamais d'exception qui remonte).
+    🔧 FIX "le paysage se répète depuis le début" : l'ancienne version faisait
+    boucler le clip via `-stream_loop -1` quand il était trop court pour
+    couvrir tout l'écran — ça provoquait un retour BRUTAL au tout premier
+    frame en plein milieu de l'écran, un artefact très visible ("tiens, ça
+    recommence"). On extrait maintenant le clip UNE SEULE FOIS (sans boucle),
+    puis on prolonge en aller-retour ("boomerang" façon Instagram) si besoin :
+    le mouvement continue, repart en arrière, puis ré-avance — jamais de saut
+    brutal au début, le raccord est un simple changement de direction.
+    """
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in out_dir.glob("*.jpg"):
             f.unlink()
-        # 🔧 FIX vitesse artificielle : 2.8 ralentissait le clip à ~36% de sa
-        # vitesse réelle — un survol aérien normal devenait visiblement figé/
-        # au ralenti, ce qui casse l'effet "naturel" recherché. On reste à la
-        # vitesse native (1.0), sans ralenti artificiel. Réglable via
-        # CLIP_SLOWDOWN si besoin (1.0 = vitesse réelle).
         SLOWDOWN = float(os.getenv("CLIP_SLOWDOWN", "1.0"))
         vf = f"setpts={SLOWDOWN}*PTS,scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
-        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", str(video_path),
+        cmd = ["ffmpeg", "-y", "-i", str(video_path),
                "-vf", vf, "-frames:v", str(n_frames), "-q:v", "3",
                str(out_dir / "f_%05d.jpg")]
         subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         files = sorted(out_dir.glob("f_*.jpg"))
-        return [Image.open(str(f)).convert("RGB") for f in files]
+        frames = [Image.open(str(f)).convert("RGB") for f in files]
+        if not frames:
+            return []
+        # Boomerang : si le clip natif est plus court que ce dont l'écran a
+        # besoin, on prolonge en alternant avant/arrière au lieu de boucler.
+        if len(frames) < n_frames and len(frames) > 1:
+            extended = list(frames)
+            going_forward = False  # le 1er ajout repart en arrière depuis la fin
+            while len(extended) < n_frames:
+                if going_forward:
+                    nxt = frames[1:]        # évite de dupliquer le frame de rebroussement
+                else:
+                    nxt = frames[-2::-1]
+                extended.extend(nxt)
+                going_forward = not going_forward
+            frames = extended[:n_frames]
+        return frames
     except Exception as e:
         print(f"   ⚠ Extraction vidéo échouée ({e}) — repli sur une photo statique.")
         return []
@@ -2231,10 +2250,26 @@ def cinematic(img, p):
     return result
 
 def get_scene(idx, p, n_frames=90):
-    # 🎬 Priorité aux vraies vidéos de paysages (mouvement réel) — sur échec
-    # de téléchargement/extraction, repli automatique et silencieux sur
-    # l'ancien système photo + Ken Burns, jamais d'interruption du run.
-    if VIDEOS:
+    # 🔧 FIX "plus de vidéos que de photos" : `if VIDEOS:` était TOUJOURS vrai
+    # (la liste n'est jamais vide) — donc CHAQUE scène tentait une vidéo en
+    # premier, et ne retombait sur une photo qu'en cas d'échec technique de
+    # téléchargement/extraction. Ce n'était pas un vrai mélange, presque tout
+    # finissait en vidéo. D'après les stats concrètes du compte, les 2 vidéos
+    # les plus vues à ce jour étaient toutes les deux en PHOTOS (pas de clip
+    # vidéo) — donc on retire cette priorité systématique et on tire au sort
+    # à chaque scène, avec une majorité de photos par défaut. Réglable via
+    # VIDEO_PROB (0.0 = que des photos, 1.0 = comportement précédent).
+    # ⚠️ Basé sur 2 exemples réels, pas une étude statistique — à réajuster si
+    # les prochaines vidéos montrent une tendance différente.
+    # 🔧 FIX "exactement le même style que les meilleures vidéos" : la version
+    # (v7) qui a produit les vidéos les plus vues du compte n'utilisait AUCUN
+    # clip vidéo — uniquement des photos + Ken Burns. C'est aussi ce qui
+    # explique l'absence totale de "paysage qui se répète" sur ces vidéos
+    # (un Ken Burns sur une photo ne boucle jamais, contrairement à un clip
+    # trop court). Défaut remis à 0 (que des photos, comme v7) ; réglable via
+    # VIDEO_PROB si tu veux réintroduire une part de vidéo plus tard.
+    VIDEO_PROB = float(os.getenv("VIDEO_PROB", "0.0"))
+    if VIDEOS and RNG.random() < VIDEO_PROB:
         vidx = p["video_indices"][idx % len(p["video_indices"])]
         url, theme = VIDEOS[vidx]
         cache_mp4 = OUT_DIR / "cache" / f"video_{vidx:03d}.mp4"
@@ -2491,15 +2526,7 @@ def render_hook_card(base_img, hook_text, alpha_frac):
     panel_h      = panel_bottom - panel_top
     for yi in range(panel_top, panel_bottom):
         dist = abs(yi - mid) / (panel_h / 2 + 1)
-        # 🔧 FIX CRITIQUE : ce panneau sombre (fond du bloc de texte) n'était
-        # JAMAIS multiplié par af (alpha_frac) — il restait dessiné à pleine
-        # opacité (jusqu'à 200/255) MÊME quand alpha_frac=0.0 (texte censé
-        # être invisible, ex. pendant les transitions breath). Résultat :
-        # pendant chaque transition, ce panneau — dimensionné sur le verset
-        # EN COURS — restait visible en fond, puis changeait brutalement de
-        # taille au verset suivant. C'était CE résidu, pas le texte lui-même,
-        # qui donnait l'impression de "voir l'ancien verset" à la transition.
-        sa = int(200 * af * max(0., 1 - dist ** 1.6))
+        sa = int(200 * max(0., 1 - dist ** 1.6))
         d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
     _decorative_band(d, panel_top + 26, a, half_w=int(W * 0.3))
 
@@ -2531,8 +2558,7 @@ def render_outro_card(base_img, reciter, alpha_frac):
     panel_top, panel_bottom = mid - 260, mid + 260
     for yi in range(panel_top, panel_bottom):
         dist = abs(yi - mid) / ((panel_bottom - panel_top) / 2 + 1)
-        # 🔧 Même FIX que render_hook_card / render_frame : panneau lié à af.
-        sa = int(205 * af * max(0., 1 - dist ** 1.6))
+        sa = int(205 * max(0., 1 - dist ** 1.6))
         d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
     _decorative_band(d, panel_top + 26, a, half_w=int(W * 0.28))
 
@@ -2574,8 +2600,16 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     # l'alignement forcé a réussi pour cette ayah, repli sur l'affichage
     # complet sinon. N'a besoin que d'UNE ligne de hauteur, jamais du bloc
     # entier wrappé.
+    # 🔧 FIX "même style que les meilleures vidéos" : le mode mot-par-mot
+    # s'activait automatiquement dès que l'alignement audio réussissait — ce
+    # qui, avec le karaoké désormais fiable, concernait la plupart des
+    # vidéos récentes. Or les 2 vidéos les plus vues du compte affichent le
+    # verset ENTIER (pas un mot à la fois). On revient donc à cet affichage
+    # par défaut, identique au style qui a le mieux marché. Réglable via
+    # WORD_FOCUS_MODE=1 si tu veux un jour réactiver le mot-par-mot.
     use_word_focus = (
-        progress is not None and word_windows is not None
+        os.getenv("WORD_FOCUS_MODE", "0") == "1"
+        and progress is not None and word_windows is not None
         and len(word_windows) == len(words_ar)
     )
     ar_est_h  = (fh + 20 + 10) if use_word_focus else len(lines_ar) * (fh + 20) + 10   # 🔧 même line_gap que draw_arabic_text (20, était 32)
@@ -2601,16 +2635,7 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
     for yi in range(panel_top, panel_bottom):
         dist = abs(yi - mid) / (panel_h / 2 + 1)
         # Dégradé quadratique : très opaque au centre, transparent aux bords
-        # 🔧 FIX CRITIQUE (le vrai bug de transition) : ce panneau n'était PAS
-        # multiplié par af (alpha_frac) — il restait dessiné à pleine
-        # opacité même quand render_frame était appelé avec alpha=0.0
-        # (pendant le breath, censé être 100% invisible). Puisque ce panneau
-        # est dimensionné sur le verset EN COURS (block_h dépend du texte de
-        # `verse`), il restait visible en fond pendant le crossfade, puis
-        # changeait de taille/position d'un coup au verset suivant — c'est CE
-        # résidu, pas le texte, qui donnait l'impression de "voir l'ancien
-        # verset" à chaque transition.
-        sa = int(210 * af * max(0., 1 - dist ** 1.6))
+        sa = int(210 * max(0., 1 - dist ** 1.6))
         # Légère teinte bleu nuit au fond (0, 0, 15)
         d.line([(0, yi), (W, yi)], fill=(0, 0, 15, sa))
 
@@ -2819,11 +2844,22 @@ def dl_audio(verse, reciter, retries=3):
         f"https://verses.quran.com/{qid}/{s}{aa}.mp3",
     ]
     last_err = None
+    # 🔧 FIX "génération > 30 min puis annulée" : avec timeout=25s × 3 essais ×
+    # 3 miroirs, UN SEUL récitateur avec un mauvais accès réseau à ce CDN
+    # pouvait coûter jusqu'à ~225s avant d'abandonner — multiplié par les ~15-20
+    # récitateurs essayés par passage (voir _select_passage_and_reciter), ça
+    # dépasse largement un budget CI de 30 min SANS PRODUIRE de vidéo. Un
+    # timeout plus court + moins de tentatives fait échouer les miroirs morts
+    # bien plus vite (~32s pire cas par récitateur), sans pénaliser les miroirs
+    # qui marchent (une requête qui aboutit reste quasi instantanée). Réglable
+    # via DL_TIMEOUT_S / DL_RETRIES si le réseau du serveur est plus lent.
+    dl_timeout = float(os.getenv("DL_TIMEOUT_S", "8"))
+    dl_retries = int(os.getenv("DL_RETRIES", str(retries if retries != 3 else 2)))
     for url in urls:
-        for attempt in range(retries):
+        for attempt in range(dl_retries):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=25) as r:
+                with urllib.request.urlopen(req, timeout=dl_timeout) as r:
                     data = r.read()
                 if len(data) > 3000:
                     cache.write_bytes(data)
@@ -2832,7 +2868,7 @@ def dl_audio(verse, reciter, retries=3):
                 last_err = f"réponse trop petite ({len(data)} octets)"
             except Exception as e:
                 last_err = str(e)
-                time.sleep(0.8 * (attempt + 1))
+                time.sleep(0.5 * (attempt + 1))
                 continue
     print(f"   ⚠ Audio INDISPONIBLE pour {verse.get('ref', f'{s}:{a}')} — dernière erreur: {last_err}")
     return None
@@ -2867,44 +2903,6 @@ def get_audio_dur(path):
 # (Whisper). pip install fait une seule fois par run (best-effort).
 _ALIGNER = {"tried": False, "model": None, "tokenizer": None, "device": None, "mod": None}
 
-class _AlignTimeout(Exception):
-    pass
-
-class _alarm_timeout:
-    """
-    Context manager imposant une VRAIE limite de temps (SIGALRM, Unix/Linux
-    uniquement — OK sur les runners GitHub Actions) sur un bloc de code.
-    Contrairement à un paramètre timeout_s non utilisé, ceci interrompt
-    réellement un appel bloqué (ex. inference CPU qui traîne) en levant
-    _AlignTimeout, plutôt que de laisser le run entier se faire tuer par le
-    timeout du job GitHub Actions au bout de 30+ min.
-    Ne fait rien (no-op) si SIGALRM n'est pas disponible (ex. Windows) ou si
-    on n'est pas dans le thread principal — dans ce cas on perd juste la
-    protection, sans jamais planter le script.
-    """
-    def __init__(self, seconds):
-        self.seconds = max(1, int(seconds))
-        self._armed = False
-
-    def _on_alarm(self, signum, frame):
-        raise _AlignTimeout(f"dépassement du délai de {self.seconds}s")
-
-    def __enter__(self):
-        try:
-            self._prev = signal.signal(signal.SIGALRM, self._on_alarm)
-            signal.alarm(self.seconds)
-            self._armed = True
-        except (ValueError, AttributeError, OSError):
-            # Pas dans le thread principal, ou plateforme sans SIGALRM.
-            self._armed = False
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._armed:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, self._prev)
-        return False
-
 def _get_aligner():
     """
     Charge (une seule fois par run) le modèle d'alignement forcé. Retourne
@@ -2914,7 +2912,6 @@ def _get_aligner():
     if _ALIGNER["tried"]:
         return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
     _ALIGNER["tried"] = True
-    _t0 = time.time()
     try:
         # 🔧 FIX CRITIQUE : le package PyPI nommé "ctc-forced-aligner" n'est PAS
         # le bon — c'est un fork tiers (Deskpai) avec une API complètement
@@ -2934,9 +2931,18 @@ def _get_aligner():
             print("   ⏳ Installation de ctc-forced-aligner depuis GitHub (karaoké mot-à-mot, ~1.2 Go au 1er run)...")
             subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "ctc-forced-aligner"],
                             check=False, timeout=60)
+            # 🔧 FIX "génération > 30 min puis annulée" : 900s (15 min) pour ce
+            # SEUL téléchargement pouvait à lui seul manger la moitié d'un
+            # budget CI de 30 min si le réseau est lent, avant même que la
+            # génération vidéo commence. Si ça prend plus de quelques minutes,
+            # mieux vaut basculer tout de suite sur l'heuristique (pas de
+            # karaoké mot-à-mot sur cette vidéo) que de risquer une annulation
+            # externe qui ne produit AUCUNE vidéo. Réglable via
+            # ALIGNER_INSTALL_TIMEOUT_S.
+            aligner_timeout = int(os.getenv("ALIGNER_INSTALL_TIMEOUT_S", "240"))
             subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--break-system-packages",
                              "git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"],
-                            check=True, timeout=900)
+                            check=True, timeout=aligner_timeout)
             import importlib
             if "ctc_forced_aligner" in sys.modules:
                 importlib.reload(sys.modules["ctc_forced_aligner"])
@@ -2950,9 +2956,9 @@ def _get_aligner():
         dtype  = torch.float16 if device == "cuda" else torch.float32
         model, tokenizer = _cfa.load_alignment_model(device, dtype=dtype)
         _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"] = model, tokenizer, device, _cfa
-        print(f"   ✅ Modèle d'alignement chargé ({device}) en {time.time()-_t0:.1f}s — karaoké mot-à-mot actif.")
+        print(f"   ✅ Modèle d'alignement chargé ({device}) — karaoké mot-à-mot actif.")
     except Exception as e:
-        print(f"   ⚠ Alignement forcé indisponible ({e}) après {time.time()-_t0:.1f}s — repli sur l'heuristique de longueur de mot, sans karaoké sur cette ayah.")
+        print(f"   ⚠ Alignement forcé indisponible ({e}) — repli sur l'heuristique de longueur de mot, sans karaoké sur cette ayah.")
         _ALIGNER["model"] = None
     return _ALIGNER["model"], _ALIGNER["tokenizer"], _ALIGNER["device"], _ALIGNER["mod"]
 
@@ -2969,26 +2975,20 @@ def _align_ayah_words(audio_path, ar_text, timeout_s=60):
     words_expected = ar_text.split()
     if not words_expected:
         return None
-    t0 = time.time()
     try:
-        with _alarm_timeout(timeout_s):
-            waveform = cfa.load_audio(str(audio_path), model.dtype, model.device)
-            emissions, stride = cfa.generate_emissions(model, waveform, batch_size=1)
-            tokens_starred, text_starred = cfa.preprocess_text(ar_text, romanize=True, language="ara")
-            segments, scores, blank_id = cfa.get_alignments(emissions, tokens_starred, tokenizer)
-            spans = cfa.get_spans(tokens_starred, segments, blank_id)
-            results = cfa.postprocess_results(text_starred, spans, stride, scores)
+        waveform = cfa.load_audio(str(audio_path), model.dtype, model.device)
+        emissions, stride = cfa.generate_emissions(model, waveform, batch_size=1)
+        tokens_starred, text_starred = cfa.preprocess_text(ar_text, romanize=True, language="ara")
+        segments, scores, blank_id = cfa.get_alignments(emissions, tokens_starred, tokenizer)
+        spans = cfa.get_spans(tokens_starred, segments, blank_id)
+        results = cfa.postprocess_results(text_starred, spans, stride, scores)
         if len(results) != len(words_expected):
             print(f"   ⚠ Alignement : {len(results)} mots retournés vs {len(words_expected)} attendus — ignoré (pas de karaoké sur cette ayah).")
             return None
         out = []
         for w_expected, r in zip(words_expected, results):
             out.append((w_expected, float(r["start"]), float(r["end"])))
-        print(f"   ✅ Alignement OK en {time.time()-t0:.1f}s ({len(words_expected)} mots).")
         return out
-    except _AlignTimeout:
-        print(f"   ⚠ Alignement interrompu après {timeout_s}s (trop lent sur cette ayah) — repli sur l'heuristique, sans karaoké ici.")
-        return None
     except Exception as e:
         print(f"   ⚠ Échec alignement sur cette ayah ({e}) — repli sur l'heuristique, sans karaoké ici.")
         return None
@@ -3032,22 +3032,6 @@ def select_verses(passage, reciter):
     ayah_frames_emitted = {}  # (s,a,qid) → nb de frames déjà émises (arrondi cumulatif)
     cum_recitation_dur  = 0.0  # 🎯 durée cumulée de récitation déjà retenue (hors hook/outro/breath)
 
-    # 🎯 FIX "petites sourates coupées" : le plafond MAX_TOTAL_DUR (25s par
-    # défaut, garde-fou copyright) pouvait interrompre un passage AVANT sa
-    # dernière ayah alors même que ce passage est une petite sourate complète
-    # (Al-Ikhlas, Al-Falaq, An-Nas, Al-Asr...) — la vidéo s'arrêtait alors en
-    # plein milieu de la sourate, ce qui est pire qu'un léger dépassement de
-    # durée. Quand le passage entier compte peu d'ayat, on préfère désormais
-    # TOUJOURS le terminer intégralement plutôt que le tronquer, même si ça
-    # dépasse un peu le plafond habituel. Réglable via SHORT_SURAH_MAX_AYAT
-    # (défaut 10 — les petites sourates de Juz Amma tiennent largement
-    # dedans) ; au-delà, le comportement d'origine (coupe au plafond, jamais
-    # en plein audio) reste inchangé pour ne pas risquer un dépassement
-    # copyright sur des passages plus longs.
-    n_ayat_total_passage = len(ayah_groups)
-    SHORT_SURAH_MAX_AYAT = int(os.getenv("SHORT_SURAH_MAX_AYAT", "10"))
-    always_complete_passage = n_ayat_total_passage <= SHORT_SURAH_MAX_AYAT
-
     for verse in passage["verses"]:
         key = (verse["surah"], verse["ayah"], reciter["qid"])
         ref = verse.get("ref") or f"{verse['surah']}:{verse['ayah']}"
@@ -3058,10 +3042,7 @@ def select_verses(passage, reciter):
             # pour une ayah de plus (même minimale), on s'arrête ici — toujours à
             # une frontière d'ayah, jamais en coupant un audio en cours. On ne
             # télécharge donc même pas l'audio suivant (inutile).
-            # Sauf pour une petite sourate qu'on a décidé de terminer entièrement
-            # (voir always_complete_passage ci-dessus) : dans ce cas on continue
-            # même si le budget standard est dépassé.
-            if n_ayat_so_far > 0 and not always_complete_passage:
+            if n_ayat_so_far > 0:
                 room_before = (MAX_TOTAL_DUR - HOOK_AUDIO_DUR - OUTRO_AUDIO_DUR
                                - cum_recitation_dur - BREATH_DUR * n_ayat_so_far)
                 if room_before <= 0:
@@ -3089,7 +3070,7 @@ def select_verses(passage, reciter):
             #     ajouter celle-ci — la vidéo reste sous le plafond.
             prospective_total = (HOOK_AUDIO_DUR + OUTRO_AUDIO_DUR + cum_recitation_dur
                                   + ad + BREATH_DUR * n_ayat_so_far)
-            if prospective_total > MAX_TOTAL_DUR and not always_complete_passage:
+            if prospective_total > MAX_TOTAL_DUR:
                 if n_ayat_so_far == 0:
                     raise AudioMissingError(
                         f"Ayah {ref} dure {ad:.1f}s à elle seule et dépasserait déjà "
@@ -3097,12 +3078,6 @@ def select_verses(passage, reciter):
                         f"passage trop long, abandonné pour éviter un dépassement copyright."
                     )
                 break
-            elif prospective_total > MAX_TOTAL_DUR and always_complete_passage:
-                # Petite sourate : on dépasse volontairement le plafond habituel
-                # pour ne jamais la laisser inachevée (voir always_complete_passage).
-                print(f"      ℹ Petite sourate : dépassement du plafond habituel "
-                      f"({prospective_total:.1f}s > {MAX_TOTAL_DUR:.0f}s) pour terminer "
-                      f"la sourate jusqu'à {ref}, plutôt que de la couper.")
             cum_recitation_dur += ad
             weights = _screen_char_weights(ayah_groups[key])
 
@@ -3376,6 +3351,8 @@ def _select_passage_and_reciter(passage):
     print("Passage: " + passage["title"])
 
     for cand in shuffled:
+        if _time_budget_exceeded():
+            return None
         try:
             print("→ Tentative avec " + cand["name"] + " " + cand["flag"])
             result = select_verses(passage, cand)
@@ -3411,6 +3388,27 @@ def _select_passage_and_reciter(passage):
 # elle est réglée très haut par défaut, donc sans incidence en usage normal.
 MAX_GENERATE_ATTEMPTS = int(os.getenv("MAX_GENERATE_ATTEMPTS", "100000"))
 RETRY_PAUSE_S         = float(os.getenv("RETRY_PAUSE_S", "5"))
+# 🔧 FIX "génération > 30 min puis annulée" : MAX_GENERATE_ATTEMPTS=100000 est
+# quasi illimité — sur un CI (GitHub Actions...) avec un `timeout-minutes`
+# fixé (souvent 30), un mauvais accès réseau à un CDN audio pouvait faire
+# tourner cette boucle jusqu'à l'annulation EXTERNE du job, qui ne laisse
+# AUCUNE vidéo ni AUCUN message d'erreur exploitable — juste "canceled". Ce
+# budget de temps fait abandonner PROPREMENT (avec un message clair) bien
+# avant cette limite externe, pour que le prochain run reparte sur de bonnes
+# bases au lieu de retomber dans le même mur. Réglable via GEN_TIME_BUDGET_S ;
+# mets une valeur < ton `timeout-minutes` CI (en secondes) avec ~5 min de
+# marge pour l'encodage final.
+GEN_TIME_BUDGET_S = float(os.getenv("GEN_TIME_BUDGET_S", str(20 * 60)))
+_gen_start_time = time.time()
+
+def _time_budget_exceeded():
+    elapsed = time.time() - _gen_start_time
+    if elapsed > GEN_TIME_BUDGET_S:
+        print(f"⏱ Budget de temps dépassé ({elapsed/60:.1f} min > {GEN_TIME_BUDGET_S/60:.0f} min) — "
+              f"abandon propre pour éviter une annulation externe sans résultat. "
+              f"Vérifie la connexion réseau vers les CDN audio, ou augmente GEN_TIME_BUDGET_S.")
+        return True
+    return False
 
 def generate(passage_idx=None):
     if passage_idx is not None:
@@ -3433,6 +3431,8 @@ def generate(passage_idx=None):
                 if attempt > MAX_GENERATE_ATTEMPTS:
                     print(f"❌ Limite de sécurité atteinte ({MAX_GENERATE_ATTEMPTS} tentatives) — abandon. "
                           f"Vérifie la connexion réseau / la disponibilité des CDN audio.")
+                    return None
+                if _time_budget_exceeded():
                     return None
                 passage = PASSAGES[idx]
                 try:
@@ -3457,34 +3457,17 @@ def generate(passage_idx=None):
     p      = make_params(n, passage)
     _breath_buf = int(round(BREATH * FPS)) + 20  # marge pour transitions/souffle
 
-    # 🎬 Plusieurs scènes PARTAGÉES pour toute la vidéo (au lieu d'une par
-    # écran) : moins de coupures = plus doux, et permet d'investir le "budget
-    # qualité" sur moins de clips. Le mouvement continue en fondu à
-    # l'intérieur d'un même groupe (même clip, on avance juste dans sa
-    # timeline) — seul un changement de GROUPE déclenche un vrai fondu vers
-    # un autre clip. Les coupures de groupe ne tombent jamais en plein
-    # milieu d'une ayah multi-écrans (uniquement aux frontières d'ayah,
-    # comme les transitions "breath" existantes).
-    # 🔧 Nombre de paysages : jusqu'ici plafonné à 3 quelle que soit la
-    # longueur ; on l'étend maintenant à 4 pour les passages plus longs
-    # (échelle sur le nombre d'ayat DISTINCTES, pas le nombre d'écrans, qui
-    # peut être gonflé par des sous-parties de la même ayah comme Ayat
-    # Al-Kursi). Le dernier paysage utilisé (juste avant l'outro) reprend
-    # volontairement le TOUT PREMIER — effet "boucle" (voir plus bas, section
-    # outro) — donc plus la vidéo est longue, plus on voit de paysages
-    # différents entre l'ouverture et sa reprise finale.
+    # 🎬 2-3 scènes PARTAGÉES pour toute la vidéo (au lieu d'une par écran) :
+    # moins de coupures = plus doux, et permet d'investir le "budget qualité"
+    # sur moins de clips. Le mouvement continue en fondu à l'intérieur d'un
+    # même groupe (même clip, on avance juste dans sa timeline) — seul un
+    # changement de GROUPE déclenche un vrai fondu vers un autre clip. Les
+    # coupures de groupe ne tombent jamais en plein milieu d'une ayah
+    # multi-écrans (uniquement aux frontières d'ayah, comme les transitions
+    # "breath" existantes).
     ayah_boundaries = [i for i in range(n - 1)
                         if (verses[i+1]["surah"], verses[i+1]["ayah"]) != (verses[i]["surah"], verses[i]["ayah"])]
-    distinct_ayat = len(ayah_boundaries) + 1
-    if distinct_ayat >= 8:
-        n_groups_target = 4
-    elif distinct_ayat >= 5:
-        n_groups_target = 3
-    elif distinct_ayat >= 3:
-        n_groups_target = 2
-    else:
-        n_groups_target = 1
-    n_groups = min(n_groups_target, distinct_ayat)
+    n_groups = min(3 if n >= 5 else (2 if n >= 2 else 1), len(ayah_boundaries) + 1)
     total_f  = sum(frame_counts) or 1
     cuts, cum = [], 0
     for i in range(n - 1):
@@ -3517,8 +3500,6 @@ def generate(passage_idx=None):
                           "pan_y": dyg * RNG.uniform(0.002, 0.006)})
     group_scenes = [get_scene(gidx, p, n_frames=group_total_frames[gidx] + _breath_buf) for gidx in range(n_groups)]
     print(f"   🎬 {n_groups} scène(s) pour toute la vidéo (au lieu de {n} — moins de coupures, plus de douceur)")
-
-
 
     fd = OUT_DIR / "frames"
     for f in fd.glob("*.jpg"):
@@ -3570,24 +3551,8 @@ def generate(passage_idx=None):
         n_audio_frames = frame_counts[vi]
         ww_v    = word_windows[vi]   # timing réel des mots pour cet écran, ou None (repli heuristique)
         # Frames pendant la récitation (son actif)
-        # 🔧 FIX "1 frame du verset précédent" pendant la transition (surtout
-        # visible sur les PETITES sourates, aux ayat très courtes) : fade_in
-        # (0.75s) et fade_out (0.65s) étaient des constantes FIXES, jamais
-        # bornées par n_audio_frames. Sur un écran très court (ex. "قُلْ هُوَ
-        # اللّٰهُ أَحَدٌ", ~1s d'audio ≈ 24 frames), fade_in+fade_out (≈34
-        # frames) dépassait le nombre total de frames de l'écran : le texte
-        # n'atteignait alors jamais alpha=1.0 (toujours en train de monter OU
-        # de redescendre), et surtout l'ancienne formule de fade-out
-        # (ta = (n_audio_frames-fi)/fade_out) ne retombait JAMAIS pile à 0 à
-        # la toute dernière frame — elle laissait un résidu (quelques % 
-        # d'opacité) qui, juxtaposé à la frame BREATH suivante (alpha=0 net),
-        # se percevait comme un micro-sursaut/flash du texte du verset
-        # précédent. On borne maintenant fade_in/fade_out à la moitié de
-        # l'écran disponible (jamais de chevauchement, toujours au moins 1
-        # frame stable à alpha=1.0 quand c'est géométriquement possible).
-        half_screen = max(1, n_audio_frames // 2)
-        fade_in  = max(1, min(int(FPS * 0.75), half_screen))
-        fade_out = max(1, min(int(FPS * 0.65), half_screen))
+        fade_in  = max(1, int(FPS * 0.75))
+        fade_out = max(1, int(FPS * 0.65))
         next_group = verse_group[vi+1] if vi < n-1 else None
         next_sc  = group_scenes[next_group][0] if next_group is not None else None
         next_kb  = group_kb[next_group]         if next_group is not None else None
@@ -3618,7 +3583,7 @@ def generate(passage_idx=None):
         # fade-out du texte : à la fin de ce fondu, le texte est invisible ET
         # l'image est déjà celle du prochain écran, donc l'écran suivant
         # démarre "propre", sans second fondu à faire.
-        cross_start = max(0, n_audio_frames - fade_out)
+        cross_start = n_audio_frames - fade_out
         for fi in range(n_audio_frames):
             t_seg = fi / max(1, n_audio_frames)          # local — pilote le karaoké mot-à-mot
             t_bg  = (verse_offset[vi] + fi) / grp_total   # global au groupe — pilote le fond
@@ -3629,18 +3594,11 @@ def generate(passage_idx=None):
                 frame = Image.blend(frame_cur, frame_next, cross_t)
             else:
                 frame = ken_burns(sc_img, t_bg, **kb)
-            # Alpha texte : fade-in en début, fade-out en fin.
-            # 🔧 FIX : la formule de fade-out redescendait vers 0 SANS jamais
-            # l'atteindre pile à la dernière frame (ta = (n_audio_frames-fi)/
-            # fade_out laissait ~1/fade_out d'opacité résiduelle à fi =
-            # n_audio_frames-1). C'est ce résidu, juxtaposé au alpha=0 net de
-            # la frame BREATH suivante, qui donnait l'impression d'un sursaut
-            # du texte précédent à la transition. On soustrait maintenant 1
-            # pour que la toute dernière frame de l'écran soit à alpha=0 EXACT.
+            # Alpha texte : fade-in en début, fade-out en fin
             if fi < fade_in:
                 ta = fi / fade_in
             elif fi > n_audio_frames - fade_out:
-                ta = (n_audio_frames - 1 - fi) / max(1, fade_out)
+                ta = (n_audio_frames - fi) / max(1, fade_out)
             else:
                 ta = 1.0
             frame = render_frame(frame, verse, reciter, passage["title"], max(0., ta), vi+1, n, progress=t_seg, word_windows=ww_v)
@@ -3671,64 +3629,21 @@ def generate(passage_idx=None):
         print(f"  Verset {vi+1} OK")
 
     # ── Carte de fermeture (outro CTA) — après le dernier verset ─────────────
-    # 🔧 FIX transition sale entrée-outro (le vrai "flash" perçu) : jusqu'ici
-    # le fond de l'outro redémarrait BRUTALEMENT à t=0 du premier paysage de
-    # la vidéo, sans le moindre fondu — contrairement aux transitions entre
-    # ayat (breath), qui elles étaient déjà en fondu. C'est ce cut sec, pile
-    # au moment où le dernier verset s'efface, qui donnait l'impression d'un
-    # "sursaut" à la transition. On applique maintenant EXACTEMENT la même
-    # technique de fondu image que les transitions breath entre versets :
-    # départ pile où le dernier verset s'est arrêté (aucun saut), arrivée en
-    # douceur sur le paysage d'ouverture repris ici à dessein — l'effet
-    # "boucle" demandé (le tout premier paysage revient à la toute fin).
     outro_scene = group_scenes[0][0]
     outro_kb    = group_kb[0]
     outro_fade  = max(1, int(OUTRO_FRAMES * 0.22))
-    last_group     = verse_group[n - 1]
-    last_scene     = group_scenes[last_group][0]
-    last_kb        = group_kb[last_group]
-    last_grp_total = max(1, group_total_frames[last_group])
-    t_bg_last_end  = (verse_offset[n - 1] + frame_counts[n - 1]) / last_grp_total
-    # 🎯 Cas particulier : une seule scène pour toute la vidéo (petite sourate,
-    # 1 seul groupe) → l'outro utilise déjà EXACTEMENT le même clip que le
-    # dernier verset. Plutôt que de "sauter" à t=0 pour ensuite fonduer (ce
-    # qui, sur un même clip, ferait un aller-retour visible dans la même
-    # vidéo source), on continue simplement d'avancer sur sa timeline —
-    # continuité totale, zéro fondu nécessaire, zéro saut.
-    if outro_scene is last_scene:
-        span = max(0.0, 1.0 - t_bg_last_end)
-        for fi in range(OUTRO_FRAMES):
-            t_o = min(1.0, t_bg_last_end + (fi / max(1, OUTRO_FRAMES - 1)) * span)
-            frame = ken_burns(outro_scene, t_o, **outro_kb)
-            if fi < outro_fade:
-                oa = fi / outro_fade
-            elif fi > OUTRO_FRAMES - outro_fade:
-                oa = (OUTRO_FRAMES - fi) / outro_fade
-            else:
-                oa = 1.0
-            frame = render_outro_card(frame, reciter, max(0., oa))
-            frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
-            gi += 1
-    else:
-        outro_xfade = min(OUTRO_FRAMES - 1, max(breath_frames, int(FPS * 0.5)))
-        for fi in range(OUTRO_FRAMES):
-            t_o = fi / max(1, OUTRO_FRAMES)
-            if fi < outro_xfade:
-                cross_t   = _ease_inout(fi / max(1, outro_xfade - 1))
-                frame_old = ken_burns(last_scene, min(1.0, t_bg_last_end), **last_kb)
-                frame_new = ken_burns(outro_scene, t_o, **outro_kb)
-                frame     = Image.blend(frame_old, frame_new, cross_t)
-            else:
-                frame = ken_burns(outro_scene, t_o, **outro_kb)
-            if fi < outro_fade:
-                oa = fi / outro_fade
-            elif fi > OUTRO_FRAMES - outro_fade:
-                oa = (OUTRO_FRAMES - fi) / outro_fade
-            else:
-                oa = 1.0
-            frame = render_outro_card(frame, reciter, max(0., oa))
-            frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
-            gi += 1
+    for fi in range(OUTRO_FRAMES):
+        t_o = fi / max(1, OUTRO_FRAMES)
+        frame = ken_burns(outro_scene, t_o, **outro_kb)
+        if fi < outro_fade:
+            oa = fi / outro_fade
+        elif fi > OUTRO_FRAMES - outro_fade:
+            oa = (OUTRO_FRAMES - fi) / outro_fade
+        else:
+            oa = 1.0
+        frame = render_outro_card(frame, reciter, max(0., oa))
+        frame.save(str(fd / f"frame_{gi:06d}.jpg"), "JPEG", quality=92)
+        gi += 1
     print(f"  Outro CTA OK")
 
     print(f"{gi} frames rendues")
@@ -3770,20 +3685,7 @@ def generate(passage_idx=None):
         # Commentaire à épingler : une question engageante fait pause le
         # défilement automatique et augmente le temps de visionnage total —
         # signal positif pour l'algo, constaté sur les comptes performants.
-        # 🔔 Ajout d'un appel à s'abonner : le commentaire épinglé est
-        # l'endroit le plus vu après la vidéo elle-même (toujours en haut des
-        # commentaires), donc l'endroit idéal pour convertir un spectateur
-        # engagé en abonné. Plusieurs variantes (question + CTA abonnement)
-        # tirées au sort pour ne pas répéter mot pour mot à chaque vidéo —
-        # ce serait suspect/spammy si identique sur tout le compte.
-        _PINNED_COMMENT_POOL = [
-            "Which part of this verse spoke to you today? Follow for a daily reminder 🤍",
-            "Save this for when you need it most 🤍 Follow along for daily verses.",
-            "Which line hit you the hardest? Follow for more daily reminders 🤍",
-            "Tag someone who needs to hear this today 🤍 Follow for daily Quran reminders.",
-            "What does this verse mean to you? Follow for a new reminder every day 🤍",
-        ]
-        suggested_pinned_comment = RNG.choice(_PINNED_COMMENT_POOL)
+        suggested_pinned_comment = "Which part of this verse spoke to you today? 🤍"
         meta = {
             "title": passage["title"],            # ex: "Patience and Hope"
             "suggested_title": suggested_title,
@@ -3829,6 +3731,18 @@ if __name__ == "__main__":
         top_attempt += 1
         if top_attempt > MAX_GENERATE_ATTEMPTS:
             print(f"❌ Limite de sécurité atteinte ({MAX_GENERATE_ATTEMPTS} tentatives globales) — abandon.")
+            video = None
+            break
+        # 🔧 FIX : generate() peut désormais rendre la main proprement (None)
+        # dès que GEN_TIME_BUDGET_S est dépassé — sans CE check ici, cette
+        # boucle externe le rappellerait quand même indéfiniment (le budget
+        # étant déjà dépassé, chaque appel échouerait instantanément mais la
+        # boucle continuerait à tourner/dormir jusqu'à MAX_GENERATE_ATTEMPTS,
+        # ce qui annule tout l'intérêt du budget de temps). On sort donc ici
+        # aussi, avec un code de sortie non-nul pour que le job CI se termine
+        # PROPREMENT (log clair, pas de vidéo) plutôt que d'être annulé de
+        # l'extérieur sans aucune information exploitable.
+        if _time_budget_exceeded():
             video = None
             break
         try:
