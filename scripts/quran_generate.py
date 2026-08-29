@@ -1738,6 +1738,16 @@ def fonts():
             # + interlignes resserrés (voir draw_arabic_text) pour un bloc plus
             # compact — et l'anglais est agrandi (62→68) pour être bien visible.
             "ar":      _load_font(AR, 80, "ar"),
+            # 🔧 FIX "karaoké trop peu voyant" : le mot en cours de récitation
+            # utilise maintenant une police légèrement PLUS GRANDE et en GRAS
+            # (comme dans les vidéos qui ont le mieux marché) — un simple
+            # changement d'opacité ne suffisait pas à le faire "sauter aux
+            # yeux", il faut aussi un changement de taille/poids physique.
+            "ar_hi":   _load_font([
+                "/usr/share/fonts/truetype/sil-scheherazade/ScheherazadeNew-Bold.ttf",
+                "/usr/share/fonts/opentype/fonts-hosny-amiri/Amiri-Bold.ttf",
+                "/usr/share/fonts/truetype/fonts-hosny-amiri/Amiri-Bold.ttf",
+            ] + AR, 87, "ar_hi"),
             "en":      _load_font(IT, 56, "en"),
             "ref":     _load_font(RG, 42, "ref"),
             "small":   _load_font(RG, 30, "small"),
@@ -1823,7 +1833,7 @@ def _draw_ayah_medallion(draw, cx, cy, ayah_num, alpha, num_font, r=24):
               font=num_font, fill=(*ACCENT_BRIGHT, int(alpha * 0.95)))
 
 def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, progress=None, word_windows=None,
-                      is_ayah_end=False, ayah_num=None, num_font=None, **_unused):
+                      is_ayah_end=False, ayah_num=None, num_font=None, font_hi=None, **_unused):
     """
     Affiche le verset arabe, avec surlignage karaoké mot-à-mot QUAND
     word_windows est fourni et cohérent avec le texte (issu de l'alignement
@@ -1847,50 +1857,73 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
     p = max(0.0, min(1.0, progress)) if progress is not None else 0.0
 
     _AR_COLOR_LIT = (255, 255, 255)  # mot prononcé : blanc pur, pleine luminosité
-    _AR_COLOR_BASE_ALPHA = 0.62       # 🔧 FIX illumination invisible : base et "illuminé"
-    # étaient quasiment la même couleur (255,250,235) vs (255,255,255) — aucune
-    # différence perceptible à l'écran. Le contraste vient maintenant de la
-    # LUMINOSITÉ (mots au repos nettement plus sombres/transparents) plutôt
-    # que de la teinte — le mot prononcé "s'allume" real­lement en passant à
-    # pleine opacité + halo fort, tout en restant blanc comme demandé.
+    _AR_COLOR_PAST   = (185, 185, 178)  # 🔧 mots déjà récités : nettement estompés
+    _AR_COLOR_BASE_ALPHA = 0.62
+    _AR_COLOR_PAST_ALPHA = 0.55
+    # 🔧 FIX "karaoké trop peu voyant" : deux problèmes cumulés par rapport aux
+    # vidéos qui ont le mieux marché (v7) —
+    #  1) le halo du mot en cours était BLANC sur texte BLANC : quasi aucun
+    #     contraste de couleur, seule l'opacité changeait. Passé à un halo
+    #     DORÉ chaud, une teinte qui tranche visuellement sur le texte blanc
+    #     (exactement la technique de v7), en plus large et plus fort.
+    #  2) tous les mots non-courants avaient la MÊME apparence (déjà dits ou
+    #     pas encore dits) — aucune sensation de progression. On distingue
+    #     maintenant clairement passé (grisé/estompé) / en cours (doré, gras,
+    #     légèrement plus grand) / à venir (blanc plein).
+    _HI_GLOW_COLOR  = (255, 214, 120)
+    _HI_GLOW_ALPHA1 = int(alpha * 0.34)
+    _HI_GLOW_ALPHA2 = int(alpha * 0.48)
+    font_hi = font_hi or font
 
     fh      = _line_h(font) + 6
     y       = y_start
     total_h = 0
     gi      = 0  # index de mot global, dans l'ordre de `words` == ordre de word_windows
     for line in lines:
-        line_w = sum(_word_w(font, w) for _, w, _ in line) + WORD_GAP * (len(line) - 1)
-        x      = cx + line_w // 2
-        for _, w, ww in line:
-            x -= ww
+        states_line = []
+        for idx, w, _ in line:
             if use_karaoke:
-                w_start, w_end = word_windows[gi]
+                w_start, w_end = word_windows[idx]
                 if p >= w_end:
-                    state = "done"
+                    st = "done"
                 elif p >= w_start:
-                    state = "current"
+                    st = "current"
                 else:
-                    state = "pending"
+                    st = "pending"
             else:
-                state = "pending"  # comportement d'origine : tout le verset en blanc de base
+                st = "pending"
+            states_line.append(st)
+        # Largeur de ligne recalculée avec la VRAIE police de chaque mot (le
+        # mot en cours utilise une police légèrement plus grande) — comme
+        # dans v7, pour un centrage cohérent même quand le mot en gras change.
+        fonts_line = [font_hi if st == "current" else font for st in states_line]
+        line_w = sum(_word_w(fu, w) for fu, (_, w, _) in zip(fonts_line, line)) + WORD_GAP * (len(line) - 1)
+        x      = cx + line_w // 2
+        for (idx, w, _), st, f_use in zip(line, states_line, fonts_line):
+            ww = _word_w(f_use, w)
+            x -= ww
             gi += 1
 
-            if state == "current":
-                # Mot en cours : halo fort et large — c'est LUI qui porte
-                # l'effet d'illumination, la couleur seule ne suffisant pas.
-                glow_a = int(alpha * 0.55)
-                for dx, dy in [(-4,0),(4,0),(0,-4),(0,4),(-3,-3),(3,-3),(-3,3),(3,3),(-6,0),(6,0),(0,-6),(0,6)]:
-                    draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_COLOR_LIT, glow_a))
-            else:
-                glow_a = int(alpha * 0.10)
-                if glow_a > 0:
-                    for dx, dy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
-                        draw.text((x + dx, y + dy), w, font=font, fill=(*_AR_GLOW_COLOR, glow_a))
+            if st == "current":
+                # Mot en cours : halo DORÉ, large et en deux passes (comme
+                # v7) — c'est le changement de TEINTE (pas juste d'opacité)
+                # qui rend l'effet vraiment visible.
+                for radius, ga in [(13, _HI_GLOW_ALPHA1), (6, _HI_GLOW_ALPHA2)]:
+                    if ga < 2:
+                        continue
+                    step = max(1, radius // 3)
+                    for ddx in range(-radius, radius + 1, step):
+                        for ddy in range(-radius // 2, radius // 2 + 1, max(1, step // 2)):
+                            draw.text((x + ddx, y + ddy), w, font=f_use, fill=(*_HI_GLOW_COLOR, max(0, min(255, ga))))
             for dx, dy in _SHADOW_OFFSETS:
-                draw.text((x + dx, y + dy), w, font=font, fill=(0, 0, 0, min(alpha, 150)))
-            fill_color = _AR_COLOR_LIT if state == "current" else _AR_COLOR
-            word_alpha = alpha if state == "current" else int(alpha * _AR_COLOR_BASE_ALPHA)
-            draw.text((x, y), w, font=font, fill=(*fill_color, word_alpha))
+                draw.text((x + dx, y + dy), w, font=f_use, fill=(0, 0, 0, min(alpha, 150)))
+            if st == "current":
+                fill_color, word_alpha = _AR_COLOR_LIT, alpha
+            elif st == "done":
+                fill_color, word_alpha = _AR_COLOR_PAST, int(alpha * _AR_COLOR_PAST_ALPHA)
+            else:
+                fill_color, word_alpha = _AR_COLOR, int(alpha * _AR_COLOR_BASE_ALPHA)
+            draw.text((x, y), w, font=f_use, fill=(*fill_color, word_alpha))
             x -= WORD_GAP
         is_last_line = (line is lines[-1])
         if is_last_line and is_ayah_end and ayah_num is not None:
@@ -2692,7 +2725,8 @@ def render_frame(base_img, verse, reciter, title, alpha_frac, verse_num, total_v
             d, verse["ar"], f["ar"],
             cx=W//2, y_start=ar_top, max_w=920, alpha=a, line_gap=20,
             progress=progress, word_windows=word_windows,
-            is_ayah_end=is_ayah_end, ayah_num=verse["ayah"], num_font=f["ayah_num"]
+            is_ayah_end=is_ayah_end, ayah_num=verse["ayah"], num_font=f["ayah_num"],
+            font_hi=f["ar_hi"]
         )
 
     # ── 5. Séparateur — ligne dorée ornementale avec fleurs ──────────────────
