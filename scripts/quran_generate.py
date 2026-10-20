@@ -1832,17 +1832,22 @@ def _draw_ayah_medallion(draw, cx, cy, ayah_num, alpha, num_font, r=24):
     draw.text((cx - dw // 2 - bb[0], cy - dh // 2 - bb[1] - dh // 6), ayah_ar,
               font=num_font, fill=(*ACCENT_BRIGHT, int(alpha * 0.95)))
 
-_GOLD = (255, 205, 100)
+_GOLD      = (255, 205, 100)   # halo
+_GOLD_TEXT = (255, 214, 110)   # mot déjà récité (doré)
+_GOLD_LIT  = (255, 238, 175)   # mot en cours (doré très lumineux)
 
 def _gold_halo(draw, x, y, w, font, a_peak):
-    for radius, k in ((14, 0.10), (9, 0.16), (5, 0.24)):
+    """Halo doré doux : 3 contours empilés (large/faible -> serré/fort)."""
+    for sw, k in ((10, 0.16), (6, 0.28), (3, 0.45)):
         ga = int(a_peak * k)
         if ga < 2:
             continue
-        for i in range(16):
-            ang = math.pi * i / 8
-            draw.text((x + radius * math.cos(ang), y + radius * math.sin(ang)),
-                      w, font=font, fill=(*_GOLD, ga))
+        draw.text((x, y), w, font=font, fill=(*_GOLD, ga),
+                  stroke_width=sw, stroke_fill=(*_GOLD, ga))
+
+def _lerp_col(c1, c2, t):
+    t = max(0.0, min(1.0, t))
+    return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
 def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, progress=None, word_windows=None,
                       is_ayah_end=False, ayah_num=None, num_font=None, font_hi=None, **_unused):
@@ -1905,10 +1910,9 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
             else:
                 st = "pending"
             states_line.append(st)
-        # Largeur de ligne recalculée avec la VRAIE police de chaque mot (le
-        # mot en cours utilise une police légèrement plus grande) — comme
-        # dans v7, pour un centrage cohérent même quand le mot en gras change.
-        fonts_line = [font_hi if st == "current" else font for st in states_line]
+        # Même police pour tous les mots : mise en page stable (rien ne bouge
+        # quand un mot s'allume), seul la COULEUR/halo change.
+        fonts_line = [font] * len(line)
         line_w = sum(_word_w(fu, w) for fu, (_, w, _) in zip(fonts_line, line)) + WORD_GAP * (len(line) - 1)
         x      = cx + line_w // 2
         for (idx, w, _), st, f_use in zip(line, states_line, fonts_line):
@@ -1916,16 +1920,18 @@ def draw_arabic_text(draw, text, font, cx, y_start, max_w, alpha, line_gap=20, p
             x -= ww
             gi += 1
 
-            _gold_halo(draw, x, y, w, f_use, alpha * (1.0 if st == "current" else 0.8))
-            draw.text((x + 1, y + 3), w, font=f_use, fill=(0, 0, 0, min(alpha, 130)))  # ombre unique, nette
-            if not use_karaoke:
+            if use_karaoke and st == "current":
+                ws_, we_ = word_windows[idx]
+                ramp = max(0.004, min(0.05, (we_ - ws_) * 0.45))
+                k = _ease_inout((p - ws_) / ramp)          # blanc -> doré lumineux, fondu rapide
+                fill_color, word_alpha = _lerp_col((255, 250, 235), _GOLD_LIT, k), alpha
+                _gold_halo(draw, x, y, w, f_use, alpha * (0.25 + 0.75 * k))
+            elif use_karaoke and st == "done":
+                fill_color, word_alpha = _GOLD_TEXT, alpha          # reste doré une fois récité
+                _gold_halo(draw, x, y, w, f_use, alpha * 0.45)
+            else:                                                   # pas encore récité : blanc, sans halo
                 fill_color, word_alpha = _AR_COLOR, alpha
-            elif st == "current":
-                fill_color, word_alpha = (255, 255, 255), alpha
-            elif st == "done":
-                fill_color, word_alpha = _AR_COLOR_PAST, int(alpha * 0.7)
-            else:
-                fill_color, word_alpha = _AR_COLOR, int(alpha * 0.9)
+            draw.text((x + 1, y + 3), w, font=f_use, fill=(0, 0, 0, min(alpha, 130)))  # ombre nette
             draw.text((x, y), w, font=f_use, fill=(*fill_color, word_alpha))
             x -= WORD_GAP
         is_last_line = (line is lines[-1])
@@ -2226,8 +2232,9 @@ def _extract_video_frames(video_path, n_frames, out_dir):
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in out_dir.glob("*.jpg"):
             f.unlink()
-        SLOWDOWN = float(os.getenv("CLIP_SLOWDOWN", "2.5"))
-        vf = f"setpts={SLOWDOWN}*PTS,scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},fps={FPS}"
+        SLOWDOWN = float(os.getenv("CLIP_SLOWDOWN", "3.0"))
+        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+              f"setpts={SLOWDOWN}*PTS,framerate=fps={FPS}:interp_start=0:interp_end=255:scene=100")
         cmd = ["ffmpeg", "-y", "-i", str(video_path),
                "-vf", vf, "-frames:v", str(n_frames), "-q:v", "3",
                str(out_dir / "f_%05d.jpg")]
@@ -3031,6 +3038,20 @@ def _align_ayah_words(audio_path, ar_text, timeout_s=60):
         return None
 
 
+def _heuristic_word_windows(text):
+    """Timing estimé des mots (fractions 0..1 de l'écran) au prorata du nombre
+    de lettres — utilisé quand l'alignement forcé est indisponible, pour que
+    le karaoké doré fonctionne TOUJOURS."""
+    words = text.split()
+    wts = [max(1, sum(1 for c in w if unicodedata.category(c).startswith("L"))) for w in words]
+    tot = float(sum(wts)) or 1.0
+    span = 0.94   # le dernier mot finit juste avant la fin de l'écran
+    out, cum = [], 0.0
+    for wt in wts:
+        out.append((cum / tot * span, (cum + wt) / tot * span))
+        cum += wt
+    return out
+
 def _screen_char_weights(sub_parts):
     """
     Pour une ayah affichée sur plusieurs écrans (ex. Ayat Al-Kursi a→h), répartit
@@ -3158,6 +3179,9 @@ def select_verses(passage, reciter):
                     prev_end = w_end
                 print(f"      {verse['surah']}:{verse['ayah']} — karaoké mot-à-mot actif ({len(aligned)} mots alignés)")
 
+            if subpart_word_windows is None:
+                subpart_word_windows = [_heuristic_word_windows(v["ar"]) for v in sub_parts]
+                print(f"      {verse['surah']}:{verse['ayah']} — karaoké doré (timing estimé)")
             ayah_audio_cache[key] = {
                 "audio": audio, "ad": ad, "weights": weights, "total_weight": sum(weights),
                 "subpart_windows": subpart_windows, "subpart_word_windows": subpart_word_windows,
@@ -3185,6 +3209,7 @@ def select_verses(passage, reciter):
             w_before     = ayah_weight_before[key]
             window_start = ad * (w_before / total_weight) if total_weight > 0 else 0.0
             window_end   = ad if is_last_subpart else ad * ((w_before + w) / total_weight)
+            this_word_windows = cache["subpart_word_windows"][idx]
         window_start = max(0.0, min(window_start, ad))
         window_end   = max(window_start + 0.05, min(window_end, ad))
         window_dur   = window_end - window_start
