@@ -2171,16 +2171,19 @@ VIDEO_WEIGHTS = _boost_weights(VIDEOS)
 PHOTO_WEIGHTS = _boost_weights(PHOTOS)
 
 class _VideoFrames:
-    """Enveloppe une liste de frames PIL déjà extraites/gradées d'un clip vidéo.
-    ken_burns() la reconnaît et indexe dedans au lieu de faire un pan/zoom —
-    le mouvement vient alors du clip réel, pas d'une simulation."""
-    def __init__(self, frames):
-        self.frames = frames
+    """Frames d'un clip stockées sur disque (JPEG déjà étalonnés) et lues à la
+    demande — évite de garder des centaines d'images 1080x1920 en RAM.
+    ken_burns() indexe dedans : le mouvement vient du clip réel."""
+    def __init__(self, paths):
+        self.paths = paths
+        self._last = (None, None)
     def frame_at(self, t):
-        if not self.frames:
+        if not self.paths:
             return None
-        idx = min(len(self.frames) - 1, max(0, int(t * len(self.frames))))
-        return self.frames[idx]
+        idx = min(len(self.paths) - 1, max(0, int(t * len(self.paths))))
+        if self._last[0] != idx:
+            self._last = (idx, Image.open(self.paths[idx]).convert("RGB"))
+        return self._last[1].copy()
 
 def dl_video(url, path, timeout=60):
     if path.exists():
@@ -2212,54 +2215,133 @@ def dl_video(url, path, timeout=60):
     return False
 
 def _extract_video_frames(video_path, n_frames, out_dir):
-    """Extrait des frames d'un clip (au FPS de la vidéo finale), recadrées en
-    portrait 1080x1920 (crop centré, cadre rempli). Le clip est ralenti
-    (setpts) avant extraction — beaucoup de b-roll (survols aériens, vagues)
-    est filmé à vitesse réelle, qui parait rapide/agitée une fois recadrée en
-    gros plan portrait ; ralentir donne un défilement doux et cinématique
-    plutôt que saccadé. Retourne une liste d'images PIL, ou une liste vide en
-    cas d'échec (jamais d'exception qui remonte).
-    🔧 FIX "le paysage se répète depuis le début" : l'ancienne version faisait
-    boucler le clip via `-stream_loop -1` quand il était trop court pour
-    couvrir tout l'écran — ça provoquait un retour BRUTAL au tout premier
-    frame en plein milieu de l'écran, un artefact très visible ("tiens, ça
-    recommence"). On extrait maintenant le clip UNE SEULE FOIS (sans boucle),
-    puis on prolonge en aller-retour ("boomerang" façon Instagram) si besoin :
-    le mouvement continue, repart en arrière, puis ré-avance — jamais de saut
-    brutal au début, le raccord est un simple changement de direction.
-    """
+    """Extrait n_frames d'un clip, recadrées en portrait 1080x1920, ralenties
+    avec fondu d'images (pas de saccades). Retourne une liste de CHEMINS jpg
+    (liste vide en cas d'échec). Si le clip est trop court : aller-retour
+    (boomerang), jamais de retour brutal au début."""
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in out_dir.glob("*.jpg"):
             f.unlink()
         SLOWDOWN = float(os.getenv("CLIP_SLOWDOWN", "3.0"))
-        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},"
+        vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},"
+              f"unsharp=5:5:0.7:5:5:0.0,"
               f"setpts={SLOWDOWN}*PTS,framerate=fps={FPS}:interp_start=0:interp_end=255:scene=100")
         cmd = ["ffmpeg", "-y", "-i", str(video_path),
-               "-vf", vf, "-frames:v", str(n_frames), "-q:v", "3",
+               "-vf", vf, "-frames:v", str(n_frames), "-q:v", "2",
                str(out_dir / "f_%05d.jpg")]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-        files = sorted(out_dir.glob("f_*.jpg"))
-        frames = [Image.open(str(f)).convert("RGB") for f in files]
-        if not frames:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+        paths = sorted(str(f) for f in out_dir.glob("f_*.jpg"))
+        if not paths:
             return []
-        # Boomerang : si le clip natif est plus court que ce dont l'écran a
-        # besoin, on prolonge en alternant avant/arrière au lieu de boucler.
-        if len(frames) < n_frames and len(frames) > 1:
-            extended = list(frames)
-            going_forward = False  # le 1er ajout repart en arrière depuis la fin
+        if len(paths) < n_frames and len(paths) > 1:
+            extended = list(paths)
+            going_forward = False
             while len(extended) < n_frames:
-                if going_forward:
-                    nxt = frames[1:]        # évite de dupliquer le frame de rebroussement
-                else:
-                    nxt = frames[-2::-1]
-                extended.extend(nxt)
+                extended.extend(paths[1:] if going_forward else paths[-2::-1])
                 going_forward = not going_forward
-            frames = extended[:n_frames]
-        return frames
+            paths = extended[:n_frames]
+        return paths
     except Exception as e:
         print(f"   ⚠ Extraction vidéo échouée ({e}) — repli sur une photo statique.")
         return []
+
+def _grade_frames_inplace(paths, p):
+    """Étalonnage cinématique appliqué une fois par fichier (réécrit en JPEG q95)."""
+    for fp in sorted(set(paths)):
+        img = Image.open(fp).convert("RGB")
+        if img.size != (W, H):
+            img = img.resize((W, H), Image.LANCZOS)
+        cinematic(img, p).save(fp, "JPEG", quality=95)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 🎥 FONDS HD VERTICAUX — Pexels (licence gratuite, usage commercial OK, pas
+# d'attribution requise). Nécessite une clé API GRATUITE : https://www.pexels.com/api/
+# puis variable d'environnement PEXELS_API_KEY. Sans clé, le script retombe sur
+# les clips Mixkit (plus flous) puis les photos — rien ne casse.
+# ═══════════════════════════════════════════════════════════════════════════
+PEXELS_KEY = os.getenv("PEXELS_API_KEY", "").strip()
+_PEXELS_DEFAULT_QUERIES = [
+    "mosque architecture", "sunset ocean waves", "mountains clouds aerial", "starry night sky",
+    "desert dunes", "misty forest", "waterfall nature", "calm lake sunrise", "golden hour clouds",
+    "milky way", "sunrise mountains", "ocean aerial",
+]
+_PEXELS_THEME_QUERIES = {
+    ("hardship","trial","struggle","steadfast","test","difficult"): ["storm clouds ocean", "rocky coast waves", "mountain storm clouds"],
+    ("mercy","hope","forgiveness","comfort","peace","heart","gratitude","reassured"): ["golden sunset lake", "calm ocean sunrise", "sunset clouds"],
+    ("greatness","creation","power","throne","glorif","signs","sovereignty","knowledge"): ["milky way", "mountains aerial clouds", "starry night sky"],
+    ("judgment","resurrection","warning","hellfire","earthquake","reality","fire","punishment"): ["dark storm clouds", "night sky stars", "dramatic clouds"],
+    ("paradise","garden","reward","river","abundance","fruit"): ["river forest", "waterfall green", "tropical lagoon"],
+    ("prayer","mosque","dhikr","remembrance","worship","friday","night prayer"): ["mosque", "mosque interior", "mosque aerial"],
+    ("dawn","morning","light","guidance","daybreak"): ["sunrise mountains", "sunrise clouds", "morning mist"],
+}
+
+def _pexels_queries_for(passage):
+    text = (passage or {}).get("title", "").lower()
+    out = []
+    for kws, qs in _PEXELS_THEME_QUERIES.items():
+        if any(k in text for k in kws):
+            out.extend(qs)
+    return out + _PEXELS_DEFAULT_QUERIES[:4] if out else list(_PEXELS_DEFAULT_QUERIES)
+
+def _pexels_fetch(query):
+    """Cherche un clip vertical HD sans personne. Retourne un chemin mp4 en cache, ou None."""
+    import urllib.parse
+    page = RNG.randint(1, 3)
+    url = (f"https://api.pexels.com/videos/search?query={urllib.parse.quote(query)}"
+           f"&orientation=portrait&size=medium&per_page=30&page={page}")
+    req = urllib.request.Request(url, headers={"Authorization": PEXELS_KEY, "User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = json.loads(r.read())
+    vids = [v for v in data.get("videos", []) if v.get("duration", 0) >= 6]
+    RNG.shuffle(vids)
+    for v in vids[:5]:
+        files = [f for f in v.get("video_files", [])
+                 if f.get("file_type") == "video/mp4" and (f.get("height") or 0) >= 1280
+                 and (f.get("width") or 0) <= 1440 and (f.get("height") or 0) > (f.get("width") or 0)]
+        if not files:
+            continue
+        best = min(files, key=lambda f: abs(f["height"] - 1920))
+        mp4 = OUT_DIR / "cache" / f"pexels_{v['id']}.mp4"
+        if not mp4.exists():
+            try:
+                rq = urllib.request.Request(best["link"], headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(rq, timeout=120) as r:
+                    mp4.write_bytes(r.read())
+            except Exception as e:
+                print(f"   Pexels DL: {e}")
+                continue
+        # 👤 pas de personne visible (image au milieu du clip)
+        try:
+            chk = OUT_DIR / "cache" / f"pexels_{v['id']}_chk.jpg"
+            subprocess.run(["ffmpeg", "-y", "-ss", str(min(3, v["duration"] / 2)), "-i", str(mp4),
+                            "-frames:v", "1", "-q:v", "3", str(chk)], check=True, capture_output=True, timeout=60)
+            if _contains_person(chk):
+                print(f"   👤 Personne détectée dans le clip Pexels {v['id']} — rejeté.")
+                continue
+        except Exception:
+            pass
+        return mp4
+    return None
+
+def _get_pexels_scene(idx, p, n_frames):
+    for attempt in range(3):
+        q = RNG.choice(p.get("pexels_queries") or _PEXELS_DEFAULT_QUERIES)
+        try:
+            mp4 = _pexels_fetch(q)
+        except Exception as e:
+            print(f"   ⚠ Pexels indisponible ({type(e).__name__}: {e})")
+            return None
+        if not mp4:
+            continue
+        paths = _extract_video_frames(mp4, n_frames, OUT_DIR / "cache" / f"vframes_{idx:03d}")
+        if paths:
+            _grade_frames_inplace(paths, p)
+            print(f"   🎥 Fond HD Pexels « {q} » ({mp4.name})")
+            return _VideoFrames(paths), "pexels:" + q
+    return None
+
+_VIGN_CACHE = {}
 
 def cinematic(img, p):
     img = ImageEnhance.Contrast(img).enhance(p["contrast"])
@@ -2275,11 +2357,15 @@ def cinematic(img, p):
         tint = Image.new("RGB", (W, H), (24, 34, 30))
         img  = Image.blend(gray, Image.blend(gray, tint, 0.10), 0.55)
     # Vignette légère uniquement sur les bords — jamais trop sombre au centre
+    vs  = int(p["vign"])
+    vign = _VIGN_CACHE.get(vs)
+    if vign is not None:
+        result = Image.composite(Image.new("RGB", (W, H), 0), img, vign)
+        return ImageEnhance.Brightness(result).enhance(1.12)
     vign = Image.new("L", (W, H), 0)
     vd   = ImageDraw.Draw(vign)
     cx, cy = W // 2, H // 2
     mr  = int(math.sqrt(cx**2 + cy**2))
-    vs  = int(p["vign"])
     for r in range(mr, 0, -5):
         # 🔧 FIX vignette inversée : la formule précédente, (1 - (r/mr)**1.6),
         # donnait une alpha MAXIMALE au centre (r petit) et quasi nulle aux bords
@@ -2287,6 +2373,7 @@ def cinematic(img, p):
         # maintenant bien les bords (r grand → alpha haute) en laissant le centre clair.
         a = int(vs * (r / mr) ** 1.6)
         vd.ellipse([cx-r, cy-r, cx+r, cy+r], fill=max(0, a))
+    _VIGN_CACHE[vs] = vign
     result = Image.composite(Image.new("RGB", (W, H), 0), img, vign)
     # S'assurer que le résultat est suffisamment lumineux
     result = ImageEnhance.Brightness(result).enhance(1.12)
@@ -2312,16 +2399,19 @@ def get_scene(idx, p, n_frames=90):
     # trop court). Défaut remis à 0 (que des photos, comme v7) ; réglable via
     # VIDEO_PROB si tu veux réintroduire une part de vidéo plus tard.
     VIDEO_PROB = float(os.getenv("VIDEO_PROB", "1.0"))
+    if PEXELS_KEY:
+        _res = _get_pexels_scene(idx, p, n_frames)
+        if _res:
+            return _res
     if VIDEOS and RNG.random() < VIDEO_PROB:
         vidx = p["video_indices"][idx % len(p["video_indices"])]
         url, theme = VIDEOS[vidx]
         cache_mp4 = OUT_DIR / "cache" / f"video_{vidx:03d}.mp4"
         if dl_video(url, cache_mp4):
-            raw_frames = _extract_video_frames(cache_mp4, n_frames, OUT_DIR / "cache" / f"vframes_{idx:03d}")
-            if raw_frames:
-                for _i in range(len(raw_frames)):
-                    raw_frames[_i] = cinematic(raw_frames[_i], p)  # en place : pas de double copie en RAM
-                return _VideoFrames(raw_frames), theme
+            raw_paths = _extract_video_frames(cache_mp4, n_frames, OUT_DIR / "cache" / f"vframes_{idx:03d}")
+            if raw_paths:
+                _grade_frames_inplace(raw_paths, p)
+                return _VideoFrames(raw_paths), theme
 
     real = p["photo_indices"][idx % len(p["photo_indices"])]
     tried = set()
@@ -2448,6 +2538,7 @@ def make_params(n, passage=None):
         "vign":          RNG.uniform(60, 100),       # Vignette très légère
         "xf":            RNG.randint(8, 16),
         "kb":            kb,
+        "pexels_queries": _pexels_queries_for(passage),
         # 🎨 ~30% des vidéos adoptent une ambiance sombre/désaturée (voir
         # cinematic()) pour plus de variété émotionnelle — le reste garde le
         # rendu couleur habituel. Choisi UNE fois par vidéo (pas par scène),
@@ -2495,9 +2586,10 @@ HOOK_DUR      = 0.0
 # d'ouverture dans mix_audio() sans toucher au reste du pipeline.
 HOOK_FRAMES   = int(round(HOOK_DUR * FPS))
 HOOK_AUDIO_DUR = HOOK_FRAMES / FPS   # 🔧 verrouillé sur le nb de frames réel (zéro dérive, même logique que BREATH_DUR)
-OUTRO_DUR     = 2.0
+OUTRO_DUR     = float(os.getenv("OUTRO_DUR_S", "0"))   # 0 = pas de carte finale : la vidéo boucle
 OUTRO_FRAMES  = int(round(OUTRO_DUR * FPS))
 OUTRO_AUDIO_DUR = OUTRO_FRAMES / FPS
+LOOP_FRAMES   = int(FPS * 0.7)   # durée du fondu de boucle (fin -> début)
 
 HOOK_HISTORY_FILE = OUT_DIR / "cache" / "recent_hooks.json"
 HOOK_HISTORY_KEEP = max(1, len(HOOK_LINES) // 2)  # exclut la moitié la plus récente
@@ -3665,7 +3757,7 @@ def generate(passage_idx=None):
         n_audio_frames = frame_counts[vi]
         ww_v    = word_windows[vi]   # timing réel des mots pour cet écran, ou None (repli heuristique)
         # Frames pendant la récitation (son actif)
-        fade_in  = max(1, int(FPS * 0.75))
+        fade_in  = max(1, int(FPS * (0.12 if vi == 0 else 0.5)))
         fade_out = max(1, int(FPS * 0.65))
         next_group = verse_group[vi+1] if vi < n-1 else None
         next_sc  = group_scenes[next_group][0] if next_group is not None else None
@@ -3708,8 +3800,14 @@ def generate(passage_idx=None):
                 frame = Image.blend(frame_cur, frame_next, cross_t)
             else:
                 frame = ken_burns(sc_img, t_bg, **kb)
+            # 🔁 Boucle : sans carte finale, le fond de la dernière image fond vers la 1re
+            if vi == n - 1 and OUTRO_FRAMES == 0 and fi >= n_audio_frames - LOOP_FRAMES:
+                _lt = _ease_inout((fi - (n_audio_frames - LOOP_FRAMES)) / max(1, LOOP_FRAMES))
+                frame = Image.blend(frame, ken_burns(group_scenes[0][0], 0.0, **group_kb[0]), _lt)
             # Alpha texte : fade-in en début, fade-out en fin
-            if fi < fade_in:
+            if vi == 0 and fi < fade_in:
+                ta = 1.0          # verset visible dès la 1re image (les 2 premières secondes décident du swipe)
+            elif fi < fade_in:
                 ta = fi / fade_in
             elif fi > n_audio_frames - fade_out:
                 ta = (n_audio_frames - fi) / max(1, fade_out)
